@@ -65,7 +65,9 @@ stage_begin() {
   STAGE_NAME="$1"
   take_lock
   case "${STAGE_NAME}" in kg00_preflight|kg80_promote) ;; *) assert_not_live_artifacts ;; esac
-  clear_downstream "${STAGE_NAME}"
+  # kg00 clears later stamps itself, and only after its gates pass and it mints a build id:
+  # a refused preflight must leave the current build's stamps alone
+  [ "${STAGE_NAME}" = kg00_preflight ] || clear_downstream "${STAGE_NAME}"
   mkdir -p "${LOG_DIR}"
   exec > >(tee -a "${LOG_DIR}/${STAGE_NAME}.log") 2>&1
   log "════════ STAGE ${STAGE_NAME} release=${RELEASE} build=${BUILD_ID:-new} ════════"
