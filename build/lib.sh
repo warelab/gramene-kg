@@ -52,3 +52,12 @@ ledger_add() {
   mkdir -p "${STATE_DIR}"
   printf '%s\t%s\n' "$(date '+%Y-%m-%dT%H:%M:%S')" "$(printf '%s\t' "$@" | sed 's/\t$//')" >> "${STATE_DIR}/${name}.tsv"
 }
+
+# Stages that write a build's db or core refuse to touch the build that is currently promoted.
+assert_not_live() {
+  local cur
+  cur="$("${MONGOSH}" --quiet "${MONGO_URI}/kg_meta" --eval "const r=db.releases.findOne({_id:'${RELEASE}'}); print(r?r.current_build:'')" | tail -1)"
+  if [ -n "${cur}" ] && [ "${cur}" = "${BUILD_ID}" ] && [ "${FORCE_LIVE:-0}" != 1 ]; then
+    die "build ${BUILD_ID} is the promoted build of ${RELEASE}; start a new build (NEW_BUILD=1) or set FORCE_LIVE=1"
+  fi
+}

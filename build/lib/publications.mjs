@@ -67,7 +67,7 @@ const tmp = buildOut('work', 'pub_enrich.json');
   authors: d.authors ?? [], doi: d.doi ?? null, enrichment_source: d.source, fetched_at: d.fetched_at })).join('\n') + '\n');
 const out = PUB.replace(/\.parquet$/, '.enriched.parquet');
 await exec(`COPY (
-  SELECT p.id, p.category, p.cls, coalesce(e.title, p.name) AS name, p.description, p.aliases,
+  SELECT p.id, p.category, p.cls, coalesce(trim(regexp_replace(regexp_replace(e.title, '<[^>]+>', '', 'g'), '\\s+', ' ', 'g')), p.name) AS name, p.description, p.aliases,
          CASE WHEN e.doi IS NOT NULL AND starts_with(p.id, 'PMID:') THEN ['doi:' || e.doi] ELSE p.xrefs END AS xrefs,
          p.in_taxon, p.genome, p.tree, p.region, p.start, p."end", p.strand,
          to_json({enriched: e.id IS NOT NULL, journal: e.journal, year: e.year, authors: e.authors, enrichment_source: e.enrichment_source})::VARCHAR AS attrs

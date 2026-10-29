@@ -1,5 +1,5 @@
 {
- "recorded_at": "2026-10-29T19:00:41.653Z",
+ "recorded_at": "2026-10-29T19:05:01.686Z",
  "build_id": "202610291429",
  "tolerance": 0.1,
  "nodes": {
@@ -14,7 +14,7 @@
   "GermplasmAccession": 7917,
   "GoTerm": 48340,
   "GramenePopulation": 11,
-  "GramenePublication": 22292,
+  "GramenePublication": 22233,
   "GrameneTaxon": 95,
   "IngestRun": 1,
   "InterProEntry": 55663,
@@ -53,14 +53,15 @@
   "go_parent": 64514,
   "interpro_parent": 8351,
   "po_parent": 2523,
-  "pub_mentions": 34332,
+  "pub_mentions": 34270,
   "qtl_genome": 12966,
   "qtl_trait": 13043,
   "reactome_parent": 1943,
   "sample_accession": 8325,
   "sample_population": 8347,
   "taxon_parent": 94,
-  "to_parent": 1886
+  "to_parent": 1886,
+  "accession_population": 8311
  },
  "not_gated": [
   "KgCollection",

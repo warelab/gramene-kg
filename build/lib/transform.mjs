@@ -208,12 +208,12 @@ await exec(`UPDATE germ_acc SET acc_key = acc_key || '.' || substr(sha256(coales
 counts.dropped.accession_keys_disambiguated = Number((await q(`SELECT count(*)::BIGINT n FROM acc_multi`))[0].n);
 await exec(`CREATE TABLE grin AS SELECT * FROM ${rj('grin')}`);
 await exec(`CREATE TABLE accessions AS
-  SELECT 'gramene.germplasm:' || a.acc_key AS id, any_value(a.pub_id) AS accession_number, any_value(a.stock_center) AS stock_center,
-         any_value(a.dbid) AS dbid, list(DISTINCT a.pop_curie) FILTER (WHERE a.pop_curie IS NOT NULL) AS populations,
-         list(DISTINCT 'gramene.sample:' || a.ens_id) FILTER (WHERE a.ens_id IS NOT NULL) AS samples,
-         any_value(a.species_system) AS species_system,
+  SELECT 'gramene.germplasm:' || a.acc_key AS id, min(a.pub_id) AS accession_number, min(a.stock_center) AS stock_center,
+         min(a.dbid) AS dbid, list(DISTINCT a.pop_curie ORDER BY a.pop_curie) FILTER (WHERE a.pop_curie IS NOT NULL) AS populations,
+         list(DISTINCT 'gramene.sample:' || a.ens_id ORDER BY 'gramene.sample:' || a.ens_id) FILTER (WHERE a.ens_id IS NOT NULL) AS samples,
+         min(a.species_system) AS species_system,
          CASE WHEN a.acc_key LIKE 'unresolved.%' THEN 'unresolved' ELSE 'resolved' END AS resolution_status,
-         any_value(r.name) AS grin_name, any_value(r.country) AS country
+         min(r.name) AS grin_name, min(r.country) AS country
   FROM germ_acc a LEFT JOIN grin r ON a.stock_center = 'ARS' AND r.germplasm_dbid = a.dbid
   GROUP BY a.acc_key`);
 await writeNodes('GermplasmAccession', nodeSql('GermplasmAccession', ['biolink:OrganismalEntity'], `accessions a LEFT JOIN gsrc s ON s.stock_center = a.stock_center`, {
@@ -223,9 +223,9 @@ await writeNodes('GermplasmAccession', nodeSql('GermplasmAccession', ['biolink:O
   attrs: `to_json({accession_number: a.accession_number, stock_center: a.stock_center, germplasm_db_id: a.dbid, populations: a.populations,
     samples: a.samples, resolution_status: a.resolution_status, country_of_origin: a.country})` }));
 await exec(`CREATE TABLE samples AS
-  SELECT 'gramene.sample:' || ens_id AS id, ens_id, list(DISTINCT pop_curie) FILTER (WHERE pop_curie IS NOT NULL) AS populations,
-         list(DISTINCT doc_id) AS source_records, any_value('gramene.germplasm:' || acc_key) AS accession, count(DISTINCT acc_key) AS n_acc,
-         any_value(species_system) AS species_system
+  SELECT 'gramene.sample:' || ens_id AS id, ens_id, list(DISTINCT pop_curie ORDER BY pop_curie) FILTER (WHERE pop_curie IS NOT NULL) AS populations,
+         list(DISTINCT doc_id ORDER BY doc_id) AS source_records, min('gramene.germplasm:' || acc_key) AS accession, count(DISTINCT acc_key) AS n_acc,
+         min(species_system) AS species_system
   FROM germ_acc WHERE ens_id IS NOT NULL GROUP BY ens_id`);
 await writeNodes('GenotypedSample', nodeSql('GenotypedSample', ['biolink:MaterialSample'], 'samples', {
   id: 'id', name: 'ens_id',
@@ -252,7 +252,7 @@ const parsePubs = (raw) => {
   const s = String(raw);
   for (const m of s.matchAll(/(?:^|[^0-9.])(10\.[0-9]{4,9}\/[^\s;,"]+)/g)) out.push('doi:' + m[1].replace(/[).]+$/, '').toLowerCase());
   const pm = s.match(/^\s*(?:PMID:?\s*)?([0-9]{4,9})\s*$/i) ?? s.match(/PMID:?\s*([0-9]{4,9})/i);
-  if (pm) out.push('PMID:' + Number(pm[1]));
+  if (pm) return ['PMID:' + Number(pm[1])];
   return [...new Set(out)];
 };
 const wMent = new NdjsonWriter(buildOut('work', 'mentions.ndjson'));
@@ -265,7 +265,8 @@ for (const line of fs.readFileSync(buildOut('extract', 'gene_xref.ndjson'), 'utf
 for (const line of fs.readFileSync(buildOut('extract', 'idf.ndjson'), 'utf8').split('\n')) {
   if (!line) continue; const r = JSON.parse(line);
   const exp = /^[AEP]-\w{4}-\d+$/.test(r.experiment) ? 'gxa.expt:' + r.experiment : 'gramene.expt:' + r.experiment;
-  const ids = new Set([...r.pmids.flatMap(parsePubs), ...r.dois.flatMap(parsePubs)]);
+  const pm = r.pmids.flatMap(parsePubs);
+  const ids = new Set(pm.length ? pm : r.dois.flatMap(parsePubs));
   for (const p of ids) await wMent.write({ pub: p, target: exp, kind: 'experiment', source: 'idf', text: r.pub_titles[0] ?? null, raw: null });
 }
 if (fs.existsSync(SNAP('ensembl_variation_sources'))) for (const s of JSON.parse(fs.readFileSync(SNAP('ensembl_variation_sources'), 'utf8'))) {
@@ -278,15 +279,26 @@ for (const line of fs.readFileSync(CFG('populations.tsv'), 'utf8').split('\n').s
 }
 await wMent.close();
 counts.dropped.unparsed_publication_strings = unparsed;
-await exec(`CREATE TABLE mentions AS SELECT * FROM read_json_auto(${sqlStr(buildOut('work', 'mentions.ndjson'))}, format='newline_delimited')`);
-await writeNodes('GramenePublication', nodeSql('GramenePublication', ['biolink:Publication'], `(SELECT pub, any_value(text) FILTER (WHERE kind IN ('experiment')) AS title FROM mentions GROUP BY pub)`, {
+{
+  const { MongoClient } = await import('mongodb');
+  const cl = await MongoClient.connect(env('MONGO_URI'));
+  const rows = await cl.db('kg_meta').collection('publication_cache').find({ _id: /^PMID:/, doi: { $ne: null } }, { projection: { doi: 1 } }).toArray();
+  await cl.close();
+  fs.writeFileSync(buildOut('work', 'doi_to_pmid.ndjson'), rows.map(r => JSON.stringify({ doi: 'doi:' + r.doi.toLowerCase(), pmid: r._id })).join('\n') + '\n');
+  counts.doi_to_pmid_known = rows.length;
+}
+await exec(`CREATE TABLE mentions_raw AS SELECT * FROM read_json_auto(${sqlStr(buildOut('work', 'mentions.ndjson'))}, format='newline_delimited')`);
+await exec(`CREATE TABLE doi2pmid AS SELECT DISTINCT doi, min(pmid) AS pmid FROM read_json(${sqlStr(buildOut('work', 'doi_to_pmid.ndjson'))}, format='newline_delimited', columns={doi:'VARCHAR', pmid:'VARCHAR'}) GROUP BY doi`);
+await exec(`CREATE TABLE mentions AS SELECT coalesce(d.pmid, m.pub) AS pub, m.* EXCLUDE (pub) FROM mentions_raw m LEFT JOIN doi2pmid d ON d.doi = m.pub`);
+counts.dropped.doi_mentions_remapped_to_pmid = Number((await q(`SELECT count(*)::BIGINT n FROM mentions_raw m JOIN doi2pmid d ON d.doi = m.pub`))[0].n);
+await writeNodes('GramenePublication', nodeSql('GramenePublication', ['biolink:Publication'], `(SELECT pub, min(text) FILTER (WHERE kind IN ('experiment')) AS title FROM mentions GROUP BY pub)`, {
   id: 'pub', name: 'coalesce(title, pub)', attrs: `to_json({enriched: false})` }));
 
 // ---- expression experiments, sample groups, contrasts ---------------------------------------
 await exec(`CREATE TABLE experiments AS SELECT e.*, i.title AS idf_title, i.release_date FROM ${rj('experiments')} e LEFT JOIN ${rj('idf')} i ON i.experiment = e.id`);
 const exptId = (col) => `CASE WHEN regexp_matches(${col}, '^[AEP]-\\w{4}-[0-9]+$') THEN 'gxa.expt:' ELSE 'gramene.expt:' END || ${col}`;
 await exec(`CREATE TABLE assays AS SELECT * FROM ${rj('assays')}`);
-await exec(`CREATE TABLE expt_stubs AS SELECT DISTINCT experiment AS id, any_value(taxon_id) AS taxon_id FROM assays WHERE experiment NOT IN (SELECT id FROM experiments) GROUP BY experiment`);
+await exec(`CREATE TABLE expt_stubs AS SELECT DISTINCT experiment AS id, min(taxon_id) AS taxon_id FROM assays WHERE experiment NOT IN (SELECT id FROM experiments) GROUP BY experiment`);
 counts.dropped.experiments_stubbed_from_assays = Number((await q(`SELECT count(*)::BIGINT n FROM expt_stubs`))[0].n);
 await writeNodes('ExpressionExperiment', nodeSql('ExpressionExperiment', ['biolink:Study'], `(SELECT id, name, idf_title, description, taxon_id, type, source, factors, release_date, pi, annotation, false AS stub FROM experiments
     UNION ALL SELECT id, NULL, NULL, NULL, taxon_id, NULL, NULL, []::VARCHAR[], NULL, NULL, NULL, true FROM expt_stubs)`, {
@@ -305,7 +317,7 @@ await writeNodes('ExpressionContrast', nodeSql('ExpressionContrast', ['biolink:S
 // assay terms: resolve against loaded ontologies, else stub
 await exec(`CREATE TABLE assay_terms AS SELECT * FROM ${rj('assay_terms')}`);
 await exec(`CREATE TABLE known_terms AS SELECT id FROM ont_go UNION SELECT id FROM ont_po UNION SELECT id FROM ont_to UNION SELECT tid FROM taxa`);
-await exec(`CREATE TABLE stubs AS SELECT term AS id, any_value(label) AS label, split_part(term, ':', 1) AS prefix
+await exec(`CREATE TABLE stubs AS SELECT term AS id, min(label) AS label, split_part(term, ':', 1) AS prefix
   FROM assay_terms WHERE term NOT IN (SELECT id FROM known_terms) GROUP BY term`);
 const stubCat = `CASE WHEN prefix IN ('UBERON','FBbt','BTO') THEN ['biolink:AnatomicalEntity'] WHEN prefix = 'CL' THEN ['biolink:Cell']
   WHEN prefix = 'FBdv' THEN ['biolink:LifeStage'] WHEN prefix = 'NCBITaxon' THEN ['biolink:OrganismTaxon'] ELSE ['biolink:NamedThing'] END`;
@@ -315,7 +327,7 @@ await writeNodes('OntologyClassStub', nodeSql('OntologyClassStub', null, 'stubs'
 await exec(`CREATE TABLE grassius AS SELECT x.* FROM ${rj('grassius')} x JOIN anchor_genes g ON g.id = x.gene`);
 await writeNodes('TranscriptionFactorFamily', nodeSql('TranscriptionFactorFamily', ['biolink:GeneFamily'], `(SELECT DISTINCT family FROM grassius)`, {
   id: `'gramene.tffamily:' || regexp_replace(family, '[^A-Za-z0-9_.-]', '_', 'g')`, name: 'family' }));
-await exec(`CREATE TABLE collections AS SELECT id, any_value(kind) AS kind, any_value(label) FILTER (WHERE label IS NOT NULL) AS label, any_value(n_genes) AS n_genes, any_value(site) AS site, min(created_at) AS created_at, any_value(description) AS description, any_value(definition) AS definition, count(*) AS n_owners FROM ${rj('collections')} GROUP BY id`);
+await exec(`CREATE TABLE collections AS SELECT id, min(kind) AS kind, min(label) FILTER (WHERE label IS NOT NULL) AS label, min(n_genes) AS n_genes, min(site) AS site, min(created_at) AS created_at, min(description) AS description, min(definition) AS definition, count(*) AS n_owners FROM ${rj('collections')} GROUP BY id`);
 await writeNodes('KgCollection', nodeSql('KgCollection', ['biolink:InformationContentEntity'], 'collections', {
   id: `'gramene.collection:' || id`, name: `coalesce(nullif(label, ''), kind || ' ' || id)`, description: 'description',
   attrs: `to_json({kind: kind, n_genes: n_genes, n_owners: n_owners, owner_display: NULL, site: site, created_at: created_at, definition: definition})` }));
@@ -343,14 +355,14 @@ await writeEdges('gene_tree', edgeSql('gene_tree', 'genes WHERE tree IS NOT NULL
   object: `'gramene.genetree:' || tree`, pks: F.gene_tree_membership.primary_knowledge_source, kl: F.gene_tree_membership.knowledge_level,
   at: F.gene_tree_membership.agent_type, ev: F.gene_tree_membership.has_evidence, rec: `${RELEASE}.genes.homology.gene_tree.id`, ksv: V.compara, slot: true }));
 await writeEdges('genome_taxon', edgeSql('genome_taxon', 'genome_ids', { subject: 'gid', predicate: `'biolink:in_taxon'`, object: `'NCBITaxon:' || anchor_taxon_id`,
-  pks: 'infores:ensembl-gene', kl: S.knowledge_level, at: S.agent_type, rec: `${RELEASE}.maps.anchor_taxon_id`, slot: true }));
+  pks: 'infores:ensembl-gene', kl: S.knowledge_level, at: S.agent_type, rec: `${RELEASE}.maps.anchor_taxon_id`, slot: false }));
 await writeEdges('taxon_parent', edgeSql('taxon_parent', `taxa c JOIN taxa p ON p.taxon_id = c.parent`, { subject: 'c.tid', predicate: `'biolink:subclass_of'`,
   object: 'p.tid', pks: 'infores:gramene-kg', kl: S.knowledge_level, at: S.agent_type, rec: `${RELEASE}.taxonomy.is_a` }));
 
 // gene -> GO (by aspect), alt ids resolved to primary
 await exec(`CREATE TABLE gene_go AS SELECT x.gene, coalesce(a.id, x.id) AS go, x.id AS raw, x.ec FROM xref x LEFT JOIN go_alt a ON a.alt = x.id WHERE x.db = 'GO'`);
 const goEco = Object.entries(EV.go_evidence_to_eco).map(([k, v]) => `WHEN ${sqlStr(k)} THEN ${sqlStr(v.eco)}`).join(' ');
-await writeEdges('gene_go', edgeSql('gene_go', `(SELECT g.gene, g.go, g.ec, min(g.raw) AS raw, any_value(t.namespace) AS namespace FROM gene_go g JOIN ont_go t ON t.id = g.go GROUP BY g.gene, g.go, g.ec)`, {
+await writeEdges('gene_go', edgeSql('gene_go', `(SELECT g.gene, g.go, g.ec, min(g.raw) AS raw, min(t.namespace) AS namespace FROM gene_go g JOIN ont_go t ON t.id = g.go GROUP BY g.gene, g.go, g.ec)`, {
   subject: `'gramene.gene:' || gene`, object: 'go',
   predicate: `CASE namespace WHEN 'molecular_function' THEN 'biolink:enables' WHEN 'cellular_component' THEN 'biolink:located_in' ELSE 'biolink:actively_involved_in' END`,
   pks: F.gene_go.primary_knowledge_source,
@@ -376,7 +388,7 @@ await writeEdges('gene_domain', edgeSql('gene_domain', `(SELECT DISTINCT gene, i
   pks: F.gene_domain.primary_knowledge_source, kl: F.gene_domain.knowledge_level, at: F.gene_domain.agent_type, ev: F.gene_domain.has_evidence,
   rec: `${RELEASE}.genes.xrefs[db=domains]`, ksv: V.interpro }));
 await writeEdges('gene_pathway', edgeSql('gene_pathway', `(SELECT DISTINCT gp.gene, gp.id, r.evidence FROM gp
-    LEFT JOIN (SELECT gene, pathway, any_value(evidence) AS evidence FROM ${rj('ont_reactome_genes')} GROUP BY ALL) r ON r.gene = gp.gene AND r.pathway = gp.id)`, {
+    LEFT JOIN (SELECT gene, pathway, min(evidence) AS evidence FROM ${rj('ont_reactome_genes')} GROUP BY ALL) r ON r.gene = gp.gene AND r.pathway = gp.id)`, {
   subject: `'gramene.gene:' || gene`, object: `'reactome:' || id`, predicate: `'biolink:participates_in'`, pks: F.gene_pathway.by_evidence.default.primary_knowledge_source,
   kl: `sql:CASE WHEN evidence = 'TAS' THEN 'knowledge_assertion' ELSE ${sqlStr(F.gene_pathway.by_evidence.default.knowledge_level)} END`,
   at: `sql:CASE WHEN evidence = 'TAS' THEN 'manual_agent' ELSE ${sqlStr(F.gene_pathway.by_evidence.default.agent_type)} END`,
@@ -399,12 +411,12 @@ await writeEdges('qtl_trait', edgeSql('qtl_trait', `(SELECT * FROM (SELECT id, s
   kl: 'statistical_association', at: 'manual_agent', ev: ['ECO:0000061'], rec: `${RELEASE}.qtls.terms` }));
 await writeEdges('qtl_genome', edgeSql('qtl_genome', 'qtls', { subject: `'gramene.qtl:' || id`, object: 'gid', predicate: `'biolink:located_in'`,
   pks: `sql:${qtlPks}`, kl: S.knowledge_level, at: S.agent_type, rec: `${RELEASE}.qtls.location.map`,
-  qualifiers: `to_json({region: region, start: start, "end": "end"})`, slot: true }));
+  qualifiers: `to_json({region: region, start: start, "end": "end"})`, slot: false }));
 
 // publications -> genes / experiments / studies / populations
 const mPks = Object.entries(F.publication_mention).filter(([k]) => k !== 'default').map(([k, v]) => `WHEN ${sqlStr(k)} THEN ${sqlStr(v.primary_knowledge_source)}`).join(' ');
 const mAt = Object.entries(F.publication_mention).filter(([k]) => k !== 'default').map(([k, v]) => `WHEN ${sqlStr(k)} THEN ${sqlStr(v.agent_type)}`).join(' ');
-await writeEdges('pub_mentions', edgeSql('pub_mentions', `(SELECT pub, target, kind, source, any_value(text) AS text, any_value(raw) AS raw FROM mentions GROUP BY ALL)`, {
+await writeEdges('pub_mentions', edgeSql('pub_mentions', `(SELECT pub, target, kind, source, min(text) AS text, min(raw) AS raw FROM mentions GROUP BY ALL)`, {
   subject: 'pub', object: 'target', predicate: `'biolink:mentions'`,
   pks: `sql:CASE WHEN kind = 'experiment' THEN 'infores:expression-atlas' WHEN kind IN ('variation_study','population') THEN 'infores:ensembl-variation'
          ELSE CASE source ${mPks} ELSE ${sqlStr(F.publication_mention.default.primary_knowledge_source)} END END`,
@@ -430,15 +442,19 @@ await writeEdges('gene_ortholog', edgeSql('gene_ortholog', `(SELECT o.gene, o.ot
 
 // germplasm: sample -> accession, sample -> population, accession -> population
 await writeEdges('sample_accession', edgeSql('sample_accession', 'samples', { subject: 'id', object: 'accession', predicate: `'biolink:derives_from'`,
-  pks: 'infores:sorghumbase', kl: S.knowledge_level, at: 'manual_agent', rec: `${RELEASE}.germplasm`, osubj: 'ens_id', slot: true }));
+  pks: 'infores:sorghumbase', kl: S.knowledge_level, at: 'manual_agent', rec: `${RELEASE}.germplasm`, osubj: 'ens_id', slot: false }));
 await writeEdges('sample_population', edgeSql('sample_population', `(SELECT id, unnest(populations) AS pop FROM samples)`, { subject: 'id', object: 'pop',
-  predicate: `'biolink:member_of'`, pks: 'infores:ensembl-variation', kl: S.knowledge_level, at: 'manual_agent', rec: `${RELEASE}.germplasm.pop_id`, slot: true }));
+  predicate: `'biolink:member_of'`, pks: 'infores:ensembl-variation', kl: S.knowledge_level, at: 'manual_agent', rec: `${RELEASE}.germplasm.pop_id`, slot: false }));
 
-// expression: assay -> experiment (slot), assay -> term, contrast -> assays
+await writeEdges('accession_population', edgeSql('accession_population', `(SELECT DISTINCT accession, unnest(populations) AS pop FROM samples)`, {
+  subject: 'accession', object: 'pop', predicate: `'biolink:member_of'`, pks: 'infores:sorghumbase', kl: 'logical_entailment', at: 'data_analysis_pipeline',
+  method: 'via genotyped samples (sample derives_from accession; sample member_of population)', rec: `${RELEASE}.germplasm.pop_id` }));
+
+// expression: assay -> experiment, assay -> term, contrast -> assays
 await writeEdges('assay_experiment', edgeSql('assay_experiment', 'assays', { subject: `'gramene.assay:' || id`, object: exptId('experiment'),
   predicate: `'biolink:part_of'`, pks: `sql:CASE WHEN starts_with(experiment, 'JGI') THEN 'infores:jgi-phytozome' ELSE 'infores:expression-atlas' END`,
-  kl: S.knowledge_level, at: 'manual_agent', rec: `${RELEASE}.assays.experiment`, slot: true }));
-await writeEdges('assay_term', edgeSql('assay_term', `(SELECT assay, term, any_value(type) AS type, any_value(label) AS label, string_agg(DISTINCT kind, ',') AS kinds FROM assay_terms GROUP BY assay, term)`, {
+  kl: S.knowledge_level, at: 'manual_agent', rec: `${RELEASE}.assays.experiment`, slot: false }));
+await writeEdges('assay_term', edgeSql('assay_term', `(SELECT assay, term, min(type) AS type, min(label) AS label, string_agg(DISTINCT kind, ',' ORDER BY kind) AS kinds FROM assay_terms GROUP BY assay, term)`, {
   subject: `'gramene.assay:' || assay`, object: 'term', predicate: `'gramene:has_sample_characteristic'`,
   pks: `sql:CASE WHEN starts_with(assay, 'JGI') THEN 'infores:jgi-phytozome' ELSE 'infores:expression-atlas' END`,
   kl: 'knowledge_assertion', at: 'manual_agent', rec: `${RELEASE}.assays.characteristic|factor`,
