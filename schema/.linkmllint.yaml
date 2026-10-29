@@ -1,0 +1,8 @@
+# Biolink names its elements with spaces, which LinkML's standard_naming rule flags
+# hundreds of times; the profile's own names follow LinkML conventions.
+extends: recommended
+rules:
+  standard_naming:
+    level: disabled
+  recommended:
+    level: disabled

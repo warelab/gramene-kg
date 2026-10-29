@@ -1,0 +1,3 @@
+# Edge ends allowed to dangle at kg30. Anything not listed fails the build.
+# Each entry: predicate, end (subject|object), id prefix or regex, reason.
+allow: []

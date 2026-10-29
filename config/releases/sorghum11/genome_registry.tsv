@@ -1,0 +1,3 @@
+system_name	release_map_id	equivalent_id	relation	evidence
+populus_trichocarpa	Pop_tri_v4	insdc.gca:GCA_000002775.4	same_as	search70.maps keys the same Pop_tri_v4 assembly by GCA_000002775.4
+vitis_vinifera	GCA_000003745.2	insdc.gca:GCA_030704535.1	different_assembly	search70 uses a newer vitis assembly; never same_as

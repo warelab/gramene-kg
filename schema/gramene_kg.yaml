@@ -1,0 +1,480 @@
+id: https://w3id.org/gramene/kg
+name: gramene_kg
+title: Gramene knowledge graph profile of Biolink
+description: >-
+  Plant profile of the Biolink Model 4.4.6 for the Gramene / SorghumBase
+  knowledge graph. Class names are distinct from Biolink's own so LinkML
+  generators never collide (Biolink 'gene' and a profile 'Gene' camel-case to
+  the same name). Mongo and the API use the gramene: predicates declared here;
+  the KGX export projects them onto the nearest Biolink predicate and records
+  the gramene: CURIE in original_predicate.
+version: 0.1.0
+license: https://creativecommons.org/licenses/by/4.0/
+
+prefixes:
+  linkml: https://w3id.org/linkml/
+  biolink: https://w3id.org/biolink/vocab/
+  gramene: https://w3id.org/gramene/kg/
+  prov: http://www.w3.org/ns/prov#
+  dcat: http://www.w3.org/ns/dcat#
+  RO: http://purl.obolibrary.org/obo/RO_
+  ECO: http://purl.obolibrary.org/obo/ECO_
+  infores: https://w3id.org/information-resource-registry/
+
+default_prefix: gramene
+default_range: string
+
+imports:
+  - linkml:types
+  # Pinned copy of https://raw.githubusercontent.com/biolink/biolink-model/v4.4.6/biolink-model.yaml
+  # (sha256 in vendor/biolink-model-4.4.6.yaml.sha256). Never import biolink:biolink-model:
+  # w3id resolves it to the floating latest.
+  - vendor/biolink-model-4.4.6
+
+# ---------------------------------------------------------------------------
+# Enumerations
+# ---------------------------------------------------------------------------
+enums:
+  LayerEnum:
+    description: Which layer produced an edge.
+    permissible_values:
+      etl:
+        description: Derived by the release build from source stores.
+      curated:
+        description: Asserted by a curator through the curation API.
+  CurationStateEnum:
+    permissible_values:
+      draft:
+      submitted:
+      published:
+      rejected:
+      retracted:
+  ExpressionLevelEnum:
+    description: Organ-level call from the expression_attributes pipeline.
+    permissible_values:
+      low:
+      medium:
+      high:
+      very_high:
+      not_expressed:
+  SeverityTierEnum:
+    description: rsID windowing tiers; any includes PAV includes PTV.
+    permissible_values:
+      any:
+      PAV:
+      PTV:
+  ZygosityEnum:
+    permissible_values:
+      het:
+      homo:
+  PanelTypeEnum:
+    permissible_values:
+      EMS:
+        description: Mutagenised population.
+      NAT:
+        description: Natural diversity panel.
+  ConfidenceEnum:
+    permissible_values:
+      exact:
+      inferred:
+      unresolved:
+
+# ---------------------------------------------------------------------------
+# Slots added by the profile (Biolink association slots are reused as-is)
+# ---------------------------------------------------------------------------
+slots:
+  release:
+    description: Release node (e.g. gramene.release:sorghum11) the record was built for.
+    range: uriorcurie
+  ingest_run:
+    description: IngestRun (prov:Activity) that generated the record.
+    range: uriorcurie
+    slot_uri: prov:wasGeneratedBy
+  layer:
+    range: LayerEnum
+  original_evidence:
+    description: Evidence string exactly as the source gave it (IEA, IDK, none, empty).
+  knowledge_source_version:
+    description: >-
+      Version of the edge's primary knowledge source actually used to build the
+      edge (e.g. GO releases/2026-06-15 from the release tree), which can differ
+      from the version of the node set loaded from the shared ontology db.
+  source_record:
+    description: Where the edge was read, e.g. sorghum11.genes.xrefs[db=GO].
+  method:
+    description: Analysis CURIE or method string that produced the edge.
+  assertion_id:
+    description: Curated assertion id (curated layer only); part of the edge id hash.
+  assertion_rev:
+    range: integer
+  evidence_code_label:
+    description: Human label of the ECO evidence term(s), for RDF consumers.
+  release_taxon_id:
+    description: >-
+      Site-specific synthetic genome taxon id (NCBI*1000+n). A join key only:
+      it is reassigned between builds and differs between sites.
+    range: integer
+  system_name:
+    description: Ensembl production name of a genome; the durable genome key for files.
+  is_anchor:
+    range: boolean
+  in_compara:
+    range: boolean
+  core_db:
+    description: Ensembl core database name (maps.db), e.g. sorghum_bicolor_core_11_108_30.
+  genome:
+    description: Genome node CURIE of a located feature.
+    range: uriorcurie
+  region:
+  start:
+    range: integer
+  end:
+    range: integer
+  gene_tree:
+    range: uriorcurie
+  leafset_sha1:
+    description: sha1 of sorted leaf gene ids; cross-release identity for churning tree ids.
+  compara_db:
+  aliases:
+    multivalued: true
+  stub:
+    range: boolean
+    description: Node minted only because an edge references a term no loaded ontology defines.
+  synthetic:
+    range: boolean
+  species_confidence:
+    range: ConfidenceEnum
+  match_method:
+  stock_center:
+  accession_number:
+    slot_uri: gramene:accessionNumber
+  resolution_status:
+  source_records:
+    multivalued: true
+    description: Source document ids (e.g. sorghum11.germplasm tmp_N) merged into this node.
+  populations:
+    multivalued: true
+    range: uriorcurie
+  panel_type:
+    range: PanelTypeEnum
+  ensembl_population_name:
+  population_size:
+    range: integer
+  so_class:
+    range: uriorcurie
+  studies:
+    multivalued: true
+    range: uriorcurie
+  base_id:
+    description: Plant Reactome base event id shared across species.
+  event_type:
+  experiment_type:
+  test_group:
+    range: uriorcurie
+  reference_group:
+    range: uriorcurie
+  sha256:
+  bytes:
+    range: integer
+  mtime:
+    range: datetime
+  path:
+  source_url:
+    range: uri
+  registered:
+    range: boolean
+    description: Whether an infores id is present in the Information Resource Registry.
+  started_at:
+    range: datetime
+    slot_uri: prov:startedAtTime
+  ended_at:
+    range: datetime
+    slot_uri: prov:endedAtTime
+  used:
+    multivalued: true
+    range: uriorcurie
+    slot_uri: prov:used
+  was_associated_with:
+    range: uriorcurie
+    slot_uri: prov:wasAssociatedWith
+  parameters:
+    description: JSON-encoded parameters of an Activity.
+  git_sha:
+  level:
+    range: ExpressionLevelEnum
+  tpm:
+    range: float
+  n_samples:
+    range: integer
+  severity_tier:
+    range: SeverityTierEnum
+  containment:
+  calls:
+    description: JSON list of {consequence, zygosity, population} LoF calls.
+  curation_state:
+    range: CurationStateEnum
+  workspace:
+
+  # ---- profile predicates (Mongo/API native; KGX writes the Biolink parent in
+  # `predicate` and this CURIE in `original_predicate`) ----
+  has_domain:
+    is_a: has part
+    description: Gene to InterPro entry.
+    domain: gene
+    range: protein domain
+  expressed_during:
+    is_a: related to
+    description: Gene to PO plant_structure_development_stage term (expressed in only accepts anatomy).
+    domain: gene
+    range: life stage
+  expression_detected_in:
+    is_a: related to
+    description: Gene detected in an expression experiment (threshold rule of mongo2solr.join.js).
+    domain: gene
+    range: study
+  has_sample_characteristic:
+    is_a: related to
+    description: Sample group to an ontology term describing it (organism part, stage, condition).
+  carries_predicted_lof_allele_of:
+    is_a: related to
+    description: Genotyped sample carries a predicted loss-of-function allele (VEP) in a gene.
+    domain: material sample
+    range: gene
+
+# ---------------------------------------------------------------------------
+# Node classes
+# ---------------------------------------------------------------------------
+classes:
+
+  GeneModel:
+    is_a: gene
+    description: A gene model in a release genome. id = gramene.gene:<stable id>.
+    id_prefixes: [gramene.gene]
+    slots: [genome, region, start, end, strand, gene_tree, release_taxon_id, aliases, release, ingest_run]
+
+  GenomeAssembly:
+    is_a: genome
+    description: >-
+      An assembled genome. id = insdc.gca:<GCA> when the release map is keyed
+      by a GCA accession, else gramene.genome:<system_name>.
+    id_prefixes: [insdc.gca, gramene.genome]
+    slots: [system_name, core_db, release_taxon_id, is_anchor, in_compara, release, ingest_run]
+
+  GrameneTaxon:
+    is_a: organism taxon
+    description: NCBI taxon (genome-rank synthetic taxa fold into GenomeAssembly).
+    id_prefixes: [NCBITaxon, gramene.taxon]
+    slots: [synthetic, release]
+
+  GeneTree:
+    is_a: gene family
+    description: Compara gene tree; ids are release-scoped.
+    id_prefixes: [gramene.genetree]
+    slots: [compara_db, leafset_sha1, release, ingest_run]
+
+  TranscriptionFactorFamily:
+    is_a: gene family
+    id_prefixes: [gramene.tffamily]
+    slots: [release]
+
+  GoTerm:
+    is_a: biological process
+    description: >-
+      GO term node. The build assigns biolink:BiologicalProcess,
+      MolecularActivity or CellularComponent by namespace in category.
+    id_prefixes: [GO]
+    slots: [aliases]
+
+  PlantAnatomyTerm:
+    is_a: anatomical entity
+    id_prefixes: [PO]
+
+  PlantStageTerm:
+    is_a: life stage
+    id_prefixes: [PO]
+
+  TraitTerm:
+    is_a: phenotypic feature
+    id_prefixes: [TO]
+
+  EvidenceCodeTerm:
+    is_a: evidence type
+    id_prefixes: [ECO]
+
+  OntologyClassStub:
+    is_a: named thing
+    mixins: [ontology class]
+    description: Term referenced by an assay from an ontology that is not loaded (EFO, EO, OBI, ...).
+    slots: [stub]
+
+  InterProEntry:
+    is_a: protein domain
+    id_prefixes: [interpro]
+    slots: [stub]
+
+  PlantReactomeEvent:
+    is_a: pathway
+    id_prefixes: [reactome]
+    slots: [base_id, event_type]
+
+  QuantitativeTraitLocus:
+    is_a: biological entity
+    mixins: [genomic entity]
+    description: QTL interval; id = gramene.qtl:<source id>.
+    id_prefixes: [gramene.qtl]
+    slots: [genome, region, start, end, release, ingest_run]
+
+  GermplasmAccession:
+    is_a: organismal entity
+    description: >-
+      A genebank accession. id = gramene.germplasm:<stock centre>.<id>
+      (ars.<GRIN dbid>, icrisat.<IS number>, irri.<dbid>, cncg.<dbid>,
+      sorbmutdb.<pub_id>, unresolved.<normalised pub_id>).
+    id_prefixes: [gramene.germplasm]
+    slots: [accession_number, stock_center, resolution_status, populations, release]
+
+  GenotypedSample:
+    is_a: material sample
+    description: A sequenced individual; id = gramene.sample:<Ensembl individual name>.
+    id_prefixes: [gramene.sample]
+    slots: [populations, source_records, release]
+
+  GramenePopulation:
+    is_a: population of individual organisms
+    id_prefixes: [gramene.population]
+    slots: [panel_type, ensembl_population_name, population_size, species_confidence, match_method, release]
+
+  VariationStudy:
+    is_a: study
+    id_prefixes: [gramene.varstudy, bioproject]
+
+  GrameneVariant:
+    is_a: sequence variant
+    id_prefixes: [dbsnp]
+    slots: [genome, region, start, end, so_class, studies, release, ingest_run]
+
+  GramenePublication:
+    is_a: publication
+    id_prefixes: [PMID, doi]
+
+  ExpressionExperiment:
+    is_a: study
+    id_prefixes: [gxa.expt, gramene.expt]
+    slots: [experiment_type, release]
+
+  SampleGroup:
+    is_a: material sample
+    id_prefixes: [gramene.assay]
+    slots: [release]
+
+  ExpressionContrast:
+    is_a: study result
+    description: >-
+      A test group x reference group comparison within an experiment: the
+      increment-1 ETL example of a relation that is itself a node.
+    id_prefixes: [gramene.contrast]
+    slots: [test_group, reference_group, release]
+
+  KgCollection:
+    is_a: information content entity
+    description: Public gene list, saved view, or curator-defined set of node CURIEs.
+    id_prefixes: [gramene.collection]
+
+  KgRelease:
+    is_a: dataset
+    class_uri: dcat:Dataset
+    id_prefixes: [gramene.release]
+    slots: [core_db, started_at, ended_at]
+
+  KgDataset:
+    is_a: dataset
+    id_prefixes: [gramene.dataset]
+    slots: [source_url, registered]
+
+  KgDistribution:
+    is_a: dataset distribution
+    class_uri: dcat:Distribution
+    id_prefixes: [gramene.dist]
+    slots: [path, sha256, bytes, mtime, source_url]
+
+  IngestRun:
+    is_a: activity
+    class_uri: prov:Activity
+    id_prefixes: [gramene.run]
+    slots: [started_at, ended_at, used, was_associated_with, parameters, git_sha]
+
+  AnalysisRun:
+    is_a: activity
+    class_uri: prov:Activity
+    description: A derived analysis (expression attributes, rsID windowing, VEP LoF table, curated analyses).
+    id_prefixes: [gramene.analysis]
+    slots: [started_at, ended_at, used, was_associated_with, parameters]
+
+  SoftwareAgent:
+    is_a: agent
+    class_uri: prov:SoftwareAgent
+    id_prefixes: [gramene.software]
+    slots: [git_sha]
+
+  CuratorAgent:
+    is_a: agent
+    class_uri: prov:Person
+    description: Curator; id = gramene.agent:<sha1 of Firebase uid>. Never an email.
+    id_prefixes: [gramene.agent]
+
+  # -------------------------------------------------------------------------
+  # Edges
+  # -------------------------------------------------------------------------
+  GrameneAssociation:
+    is_a: association
+    description: >-
+      Every edge in the graph. id = gramene.assoc:<sha256-24 of
+      subject|predicate|object|primary_knowledge_source|identity qualifiers
+      [|assertion_id for curated edges]>. Required Biolink provenance:
+      primary_knowledge_source, knowledge_level, agent_type.
+    id_prefixes: [gramene.assoc]
+    slots:
+      - release
+      - ingest_run
+      - layer
+      - original_evidence
+      - knowledge_source_version
+      - source_record
+      - method
+      - assertion_id
+      - assertion_rev
+      - evidence_code_label
+      - curation_state
+      - workspace
+    slot_usage:
+      primary knowledge source:
+        required: true
+      knowledge level:
+        required: true
+      agent type:
+        required: true
+      has evidence:
+        # Documented deviation: Biolink 4.4.6 types has_evidence as an
+        # information content entity; ECO terms are evidence types.
+        range: EvidenceCodeTerm
+      layer:
+        required: true
+
+  QtlContainment:
+    is_a: GrameneAssociation
+    description: Gene fully contained in a QTL interval on the same genome.
+    slots: [containment]
+
+  OrganExpression:
+    is_a: GrameneAssociation
+    description: Gene expressed (or, with negated, not expressed) in a PO organ.
+    slots: [level, tpm, n_samples]
+
+  VariantToGene:
+    is_a: GrameneAssociation
+    slots: [severity_tier]
+
+  SampleLossOfFunction:
+    is_a: GrameneAssociation
+    description: Predicted loss-of-function allele calls of a sample in a gene.
+    slots: [calls]

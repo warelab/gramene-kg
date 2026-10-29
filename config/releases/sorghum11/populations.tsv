@@ -1,0 +1,12 @@
+pop_id	system_name	label	panel_type	ensembl_population_name	ensembl_size	n_germplasm_docs	doi	match_method	species_confidence	note
+1	sorghum_bicolor	Purdue EMS	EMS	purdueEMS	486	486		size_exact	exact	
+2	sorghum_bicolor	USDA Lubbock EMS	EMS	USDA-Lubbock-EMS	252	252		size_exact	exact	
+3	sorghum_bicolor	Lozano	NAT	Lozano_study	499	500	10.1038/s41477-020-00834-5	name	exact	REST size 499 vs 500 docs
+4	sorghum_bicolor	USDA Lubbock EMS3	EMS	USDA-Lubbock-EMS3		890	10.1111/tpj.16582	name	exact	sorbmutdb LBK_ samples
+5	sorghum_bicolor	Boatwright SAP	NAT	SAP		410	10.1111/tpj.15853	name	exact	
+7	sorghum_bicolor	Kumar BAP	NAT	BAP	365	152	10.1534/genetics.115.183947	name	exact	REST size 365 vs 152 docs
+8	sorghum_bicolor	Lasky landraces	NAT	Lasky_collection	2327	2327	10.1126/sciadv.1400218	size_exact	exact	
+9	sorghum_bicolor	Sorghum Genomics Toolbox	NAT			0		vep_study_info	exact	940 SGT_ samples in VEP table, no germplasm docs; LoF edges excluded
+6	oryza_sativa	Rice 3K + CNCG/CAAS rice	NAT			3022		stock_center	inferred	IRIS_313 (IRRI) and CNCG/CAAS B### samples
+12	oryza_sativa	USDA GSOR rice genetic stocks	NAT			200		ens_id_prefix	inferred	USDA_GSOR samples recorded under stock_center ARS
+15	oryza_sativa	Japanese / World Rice Core collections	NAT			119		stock_center	inferred	JRC/WRC; vepStudyInfo maps zea_maysb73 15 to MaizeGDB 2024, which does not match these docs

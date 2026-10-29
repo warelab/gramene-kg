@@ -1,0 +1,40 @@
+# Release descriptor for the SorghumBase v11 load.
+release: sorghum11
+site: sorghumbase
+release_root: /usr/local/gramene/subsites/sorghum/v11
+src_db: sorghum11                 # verified at kg00 against gramene-mongodb-config getMongoConfig().db
+previous_release: sorghum10b      # previous live site; sorghum10 is the germplasm carry-forward source
+genes_core: sorghum_genes11
+suggestions_core: sorghum_suggestions11
+passthrough_api: https://data.sorghumbase.org/sorghum_v11
+anchor_genome_ref: insdc.gca:GCA_000003195.3   # default genome for ambiguous gene aliases
+inputs:
+  rsid_table: /scratch/olson/rsid_projection/work_conseq/sorghum_bicolor.tsv
+  rsid_ok: /scratch/olson/rsid_projection/work_conseq/sorghum_bicolor.ok
+  rsid_vcf: /scratch/olson/rsid_projection/vcf/sorghum_bicolor.vcf.gz
+  vep_table: /usr/local/gramene/subsites/sorghum/v10/gramene-solr/vep/vep_attributes.txt
+  vep_lineage: /usr/local/gramene/subsites/sorghum/v9/gramene-solr/vep/sorghum_vep.txt2
+  atlas_dir: /usr/local/gramene/subsites/sorghum/v11/gramene-mongodb/atlas/tmp
+  homology_dir: /usr/local/gramene/subsites/sorghum/v11/gramene-mongodb/search/tmp_homologs
+  grassius_tsv: /usr/local/gramene/subsites/sorghum/v11/gramene-mongodb/search/grassius.tsv
+  ontology_tmp: /usr/local/gramene/subsites/sorghum/v11/gramene-mongodb/ontologies/tmp
+  expression_pipeline: /usr/local/gramene/subsites/sorghum/v11/gramene-solr/expression_pipeline
+  jgi_dir: /usr/local/gramene/subsites/sorghum/v11/gramene-mongodb/jgi
+  saved_search_backup: /usr/local/gramene/subsites/sorghum/v11/saved_search_backup.json
+  grin_export: /scratch/olson/gramene-g2p/storage/staging/datasets/test/versions/1/brapi_npgsweb.ars-grin.gov_SORGHUM_2026-05-15T21-24-04-863Z.germplasm.json
+  vep_study_info: /home/olson/src/warelab/gramene-search/src/vepStudyInfo.js
+snapshots:   # fetched by kg05 into extract/snapshots/, sha256-stamped
+  ensembl_populations: https://data.gramene.org/pansite-ensembl-115/info/variation/populations/sorghum_bicolor?content-type=application/json
+  ensembl_variation_sources: https://data.gramene.org/pansite-ensembl-115/info/variation/sorghum_bicolor?content-type=application/json
+  cshl_curated: https://dev.gramene.org/cshl_curated_genes.json
+  rapdb_curated: https://dev.gramene.org/oryza/rapdb/curated_genes.json
+preflight_min:   # kg00 floors on the source db (die below these)
+  genes: 5000000
+  maps: 128
+  germplasm: 8000
+  qtls: 12000
+  experiments: 360
+  assays: 6000
+  genetree: 50000
+  expression_attributes: 240000
+required_ontology_loads: [go, po, to, eco, so, interpro, plant_reactome, plant_reactome_genes, ncbi_taxonomy]

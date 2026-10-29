@@ -1,0 +1,14 @@
+{
+  "name": "gramene-kg",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "license": "Apache-2.0",
+  "description": "Gramene / SorghumBase knowledge graph: build pipeline, API, MCP tools",
+  "engines": { "node": ">=22" },
+  "dependencies": {
+    "@duckdb/node-api": "2.0.0-r.1",
+    "js-yaml": "^4.1.0",
+    "mongodb": "^6.10.0"
+  }
+}

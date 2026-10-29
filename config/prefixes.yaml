@@ -1,0 +1,56 @@
+# CURIE prefixes and id patterns. This file (not Bioregistry) drives the kg30 id gate.
+# resolver: URL template, $1 = local id, percent-encoded with encodeURIComponent.
+external:
+  insdc.gca:  {pattern: '^GCA_[0-9]{9}(\.[0-9]+)?$',        resolver: 'https://www.ncbi.nlm.nih.gov/datasets/genome/$1'}
+  NCBITaxon:  {pattern: '^[0-9]+$',                          resolver: 'https://www.ncbi.nlm.nih.gov/Taxonomy/Browser/wwwtax.cgi?id=$1'}
+  GO:         {pattern: '^[0-9]{7}$',                        resolver: 'http://purl.obolibrary.org/obo/GO_$1'}
+  PO:         {pattern: '^[0-9]{7}$',                        resolver: 'http://purl.obolibrary.org/obo/PO_$1'}
+  TO:         {pattern: '^[0-9]{7}$',                        resolver: 'http://purl.obolibrary.org/obo/TO_$1'}
+  ECO:        {pattern: '^[0-9]{7}$',                        resolver: 'http://purl.obolibrary.org/obo/ECO_$1'}
+  SO:         {pattern: '^[0-9]{7}$',                        resolver: 'http://purl.obolibrary.org/obo/SO_$1'}
+  interpro:   {pattern: '^IPR[0-9]{6}$',                     resolver: 'https://www.ebi.ac.uk/interpro/entry/InterPro/$1'}
+  reactome:   {pattern: '^R-[A-Z]{3}-[0-9]+(-[0-9]+)?(\.[0-9]+)?$', resolver: 'https://plantreactome.gramene.org/content/detail/$1'}
+  dbsnp:      {pattern: '^rs[0-9]+$',                        resolver: 'https://data.gramene.org/pansite-ensembl-115/variation/sorghum_bicolor/$1?content-type=application/json'}
+  PMID:       {pattern: '^[0-9]+$',                          resolver: 'https://pubmed.ncbi.nlm.nih.gov/$1'}
+  doi:        {pattern: '^10\.[0-9]{4,9}/\S+$',              resolver: 'https://doi.org/$1'}
+  gxa.expt:   {pattern: '^[AEP]-\w{4}-[0-9]+$',              resolver: 'https://www.ebi.ac.uk/gxa/experiments/$1'}
+  bioproject: {pattern: '^PRJ[DEN][A-Z][0-9]+$',             resolver: 'https://www.ebi.ac.uk/ena/browser/view/$1'}
+  infores:    {pattern: '^[a-z0-9_.-]+$',                    resolver: 'https://w3id.org/information-resource-registry/$1'}
+  # ontology prefixes that appear only as OntologyClassStub nodes (assay characteristics)
+  EFO: {pattern: '^[0-9]{7}$'}
+  EO: {pattern: '^[0-9]{7}$'}
+  UBERON: {pattern: '^[0-9]{7}$'}
+  OBI: {pattern: '^[0-9]{7}$'}
+  FBbt: {pattern: '^[0-9]{8}$'}
+  FBdv: {pattern: '^[0-9]{8}$'}
+  CL: {pattern: '^[0-9]{7}$'}
+  BTO: {pattern: '^[0-9]{7}$'}
+  CHEBI: {pattern: '^[0-9]+$'}
+  PATO: {pattern: '^[0-9]{7}$'}
+
+# Local prefixes. Rule: a local id never contains '/'. Resolver is the KG node page.
+local_resolver: 'https://data.sorghumbase.org/kg/ui/node/$1'
+local:
+  gramene.gene:       '^[A-Za-z0-9][A-Za-z0-9._:-]*$'
+  gramene.genome:     '^[a-z0-9_]+$'
+  gramene.taxon:      '^[0-9]+$'
+  gramene.genetree:   '^[A-Za-z0-9_.-]+$'
+  gramene.qtl:        '^[A-Za-z0-9._-]+$'
+  gramene.germplasm:  '^(ars|icrisat|irri|cncg|sorbmutdb|wrc|jrc|unresolved)\.[^/\s]+$'
+  gramene.sample:     '^[^/\s]+$'
+  gramene.population: '^[a-z0-9_]+\.[0-9]+$'
+  gramene.varstudy:   '^[A-Za-z0-9_.-]+$'
+  gramene.expt:       '^[A-Za-z0-9-]+$'
+  gramene.assay:      '^[A-Za-z0-9-]+\.g[0-9]+$'
+  gramene.contrast:   '^[A-Za-z0-9-]+\.g[0-9]+_g[0-9]+$'
+  gramene.tffamily:   '^[^/\s]+$'
+  gramene.collection: '^[A-Za-z0-9]+$'
+  gramene.term:       '^[A-Za-z]+_[0-9]+$'
+  gramene.analysis:   '^[a-z0-9_.-]+@[A-Za-z0-9._-]+$'
+  gramene.run:        '^[a-z0-9_]+-[0-9]{12}$'
+  gramene.release:    '^[a-z]+[0-9]+$'
+  gramene.dataset:    '^[a-z0-9_.-]+@[^/\s]+$'
+  gramene.dist:       '^sha256-[0-9a-f]{64}$'
+  gramene.software:   '^[a-z0-9_-]+@[0-9a-f]{7,40}$'
+  gramene.agent:      '^[0-9a-f]{40}$'
+  gramene.assoc:      '^[0-9a-f]{24}$'

@@ -1,0 +1,8 @@
+{
+  "_comment": "Representative PO plant_anatomy term per expression_attributes organ (organs from gramene-solr/expression_pipeline/po_map.py PO_TO_ORGAN). Verified in ontology.po 2026-10-29.",
+  "root": "PO:0009005", "shoot": "PO:0009006", "leaf": "PO:0025034", "stem": "PO:0009047",
+  "meristem": "PO:0009013", "inflorescence": "PO:0009049", "flower": "PO:0009046",
+  "anther_pollen": "PO:0009066", "seed": "PO:0009010", "endosperm": "PO:0009089",
+  "embryo": "PO:0009009", "pericarp": "PO:0009084", "vasculature": "PO:0000034",
+  "fruit": "PO:0009001", "seed_coat": "PO:0009088", "cotyledon": "PO:0020030", "tuber": "PO:0025522"
+}

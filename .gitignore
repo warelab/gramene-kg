@@ -1,0 +1,9 @@
+node_modules/
+.venv/
+.env
+.state/
+logs/
+schema/generated/
+*.pyc
+__pycache__/
+.venv-kgx/

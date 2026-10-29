@@ -1,0 +1,72 @@
+# Provenance defaults per edge family. Enum values are exact Biolink 4.4.6
+# KnowledgeLevelEnum / AgentTypeEnum members; kg30 checks membership.
+# ECO ids verified against ontology.eco (releases/2026-07-10) on 2026-10-29.
+
+go_evidence_to_eco:   # from ontology.eco xrefs GOECO:<code>; IEA is the only automatic code
+  EXP: {eco: "ECO:0000269", label: "experimental evidence used in manual assertion"}
+  HDA: {eco: "ECO:0007005", label: "high throughput direct assay evidence used in manual assertion"}
+  HEP: {eco: "ECO:0007007", label: "high throughput expression pattern evidence used in manual assertion"}
+  HGI: {eco: "ECO:0007003", label: "high throughput genetic interaction phenotypic evidence used in manual assertion"}
+  HMP: {eco: "ECO:0007001", label: "high throughput mutant phenotypic evidence used in manual assertion"}
+  HTP: {eco: "ECO:0006056", label: "high throughput evidence used in manual assertion"}
+  IBA: {eco: "ECO:0000318", label: "biological aspect of ancestor evidence used in manual assertion"}
+  IBD: {eco: "ECO:0000319", label: "biological aspect of descendant evidence used in manual assertion"}
+  IC: {eco: "ECO:0000305", label: "curator inference used in manual assertion"}
+  IDA: {eco: "ECO:0000314", label: "direct assay evidence used in manual assertion"}
+  IEA: {eco: "ECO:0000501", label: "evidence used in automatic assertion"}
+  IEP: {eco: "ECO:0000270", label: "expression pattern evidence used in manual assertion"}
+  IGC: {eco: "ECO:0000317", label: "genomic context evidence used in manual assertion"}
+  IGI: {eco: "ECO:0000316", label: "genetic interaction evidence used in manual assertion"}
+  IKR: {eco: "ECO:0000320", label: "phylogenetic determination of loss of key residues evidence used in manual assertion"}
+  IMP: {eco: "ECO:0000315", label: "mutant phenotype evidence used in manual assertion"}
+  IMR: {eco: "ECO:0000320", label: "phylogenetic determination of loss of key residues evidence used in manual assertion"}
+  IPI: {eco: "ECO:0000353", label: "physical interaction evidence used in manual assertion"}
+  IRD: {eco: "ECO:0000321", label: "rapid divergence from ancestral sequence evidence used in manual assertion"}
+  ISA: {eco: "ECO:0000247", label: "sequence alignment evidence used in manual assertion"}
+  ISM: {eco: "ECO:0000255", label: "match to sequence model evidence used in manual assertion"}
+  ISO: {eco: "ECO:0000266", label: "sequence orthology evidence used in manual assertion"}
+  ISS: {eco: "ECO:0000250", label: "sequence similarity evidence used in manual assertion"}
+  NAS: {eco: "ECO:0000303", label: "author statement without traceable support used in manual assertion"}
+  ND: {eco: "ECO:0000307", label: "no evidence data found used in manual assertion"}
+  RCA: {eco: "ECO:0000245", label: "automatically integrated combinatorial evidence used in manual assertion"}
+  TAS: {eco: "ECO:0000304", label: "author statement supported by traceable reference used in manual assertion"}
+
+families:
+  gene_go:
+    primary_knowledge_source: infores:ensembl-gene
+    by_code:
+      IEA: {knowledge_level: prediction, agent_type: automated_agent}
+      default: {knowledge_level: knowledge_assertion, agent_type: manual_agent}
+  gene_po_curated:          # keyed by source genome
+    oryza_sativa: {primary_knowledge_source: infores:rap-db, knowledge_level: knowledge_assertion, agent_type: manual_agent, has_evidence: [ECO:0000352]}
+    arabidopsis_thaliana: {primary_knowledge_source: infores:tair, knowledge_level: knowledge_assertion, agent_type: not_provided, has_evidence: []}
+    default: {primary_knowledge_source: infores:ensembl-gene, knowledge_level: not_provided, agent_type: not_provided, has_evidence: []}
+  gene_to_curated:
+    oryza_sativa: {primary_knowledge_source: infores:rap-db, knowledge_level: knowledge_assertion, agent_type: manual_agent, has_evidence: [ECO:0000352]}
+    default: {primary_knowledge_source: infores:sorghumbase-curation, knowledge_level: knowledge_assertion, agent_type: manual_agent, has_evidence: [ECO:0000352]}
+  gene_tree_membership: {primary_knowledge_source: infores:ensembl-compara, knowledge_level: prediction, agent_type: computational_model, has_evidence: [ECO:0000080]}
+  orthology:            {primary_knowledge_source: infores:ensembl-compara, knowledge_level: prediction, agent_type: computational_model, has_evidence: [ECO:0000080]}
+  gene_domain:          {primary_knowledge_source: infores:interpro, knowledge_level: prediction, agent_type: automated_agent, has_evidence: [ECO:0000259]}
+  gene_pathway:
+    by_evidence:
+      TAS: {primary_knowledge_source: infores:plant-reactome, knowledge_level: knowledge_assertion, agent_type: manual_agent, has_evidence: [ECO:0000304]}
+      default: {primary_knowledge_source: infores:plant-reactome, knowledge_level: prediction, agent_type: computational_model, has_evidence: []}
+  qtl_containment:      {knowledge_level: logical_entailment, agent_type: data_analysis_pipeline, has_evidence: [], method: 'qtl-containment'}   # primary source = the QTL's source
+  qtl_trait:
+    Sorghum_QTL_Atlas: {primary_knowledge_source: infores:sorghum-qtl-atlas, knowledge_level: statistical_association, agent_type: manual_agent, has_evidence: [ECO:0000061]}
+    Gramene_QTLdb:     {primary_knowledge_source: infores:gramene-qtldb, knowledge_level: statistical_association, agent_type: manual_agent, has_evidence: [ECO:0000061]}
+  publication_mention:
+    geneRIF: {primary_knowledge_source: infores:ncbi-gene, knowledge_level: knowledge_assertion, agent_type: manual_agent}
+    rap-db:  {primary_knowledge_source: infores:rap-db, knowledge_level: knowledge_assertion, agent_type: manual_agent}
+    CSHL:    {primary_knowledge_source: infores:sorghumbase-curation, knowledge_level: knowledge_assertion, agent_type: manual_agent}
+    default: {primary_knowledge_source: infores:ensembl-gene, knowledge_level: knowledge_assertion, agent_type: not_provided}   # core xrefs, e.g. LeGOO
+  organ_expression:     {primary_knowledge_source: infores:sorghumbase, knowledge_level: observation, agent_type: data_analysis_pipeline, has_evidence: [ECO:0006069]}
+  expression_detected:
+    EBI: {primary_knowledge_source: infores:expression-atlas, knowledge_level: observation, agent_type: data_analysis_pipeline, has_evidence: [ECO:0000295]}
+    JGI: {primary_knowledge_source: infores:jgi-phytozome, knowledge_level: observation, agent_type: data_analysis_pipeline, has_evidence: [ECO:0000295]}
+  variant_gene:         {primary_knowledge_source: infores:eva, knowledge_level: logical_entailment, agent_type: data_analysis_pipeline, has_evidence: []}
+  sample_lof:           {primary_knowledge_source: infores:ensembl-variation, knowledge_level: prediction, agent_type: computational_model, has_evidence: []}
+  tf_family:
+    direct:     {primary_knowledge_source: infores:grassius, knowledge_level: knowledge_assertion, agent_type: manual_agent}
+    projected:  {primary_knowledge_source: infores:grassius, knowledge_level: prediction, agent_type: computational_model, has_evidence: [ECO:0000080]}
+  structural:           {primary_knowledge_source: infores:gramene-kg, knowledge_level: knowledge_assertion, agent_type: automated_agent}   # slots emitted as KGX edges

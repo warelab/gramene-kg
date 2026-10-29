@@ -1,0 +1,25 @@
+# primary/aggregator knowledge sources. registered: present in
+# https://github.com/biolink/information-resource-registry today (checked 2026-10-27).
+# Provisional ids are used immediately; registry_pr is filled when the PR is filed.
+infores:ensembl-gene:        {name: Ensembl gene models (core dbs via Gramene build),   registered: true}
+infores:go:                  {name: Gene Ontology,                                         registered: true}
+infores:interpro:            {name: InterPro,                                              registered: true}
+infores:dbsnp:               {name: dbSNP,                                                 registered: true}
+infores:ncbi-gene:           {name: NCBI Gene (GeneRIF),                                   registered: true}
+infores:reactome:            {name: Reactome,                                              registered: true}
+infores:ensembl-compara:     {name: Ensembl Compara (Gramene gene trees),                  registered: false, registry_pr: null}
+infores:ensembl-variation:   {name: Ensembl Variation (VEP LoF tables),                    registered: false, registry_pr: null}
+infores:plant-reactome:      {name: Plant Reactome,                                        registered: false, registry_pr: null}
+infores:expression-atlas:    {name: EBI Expression Atlas,                                  registered: false, registry_pr: null}
+infores:jgi-phytozome:       {name: JGI Phytozome sorghum expression (Mullet lab),         registered: false, registry_pr: null}
+infores:eva:                 {name: European Variation Archive,                            registered: false, registry_pr: null}
+infores:rap-db:              {name: RAP-DB curated rice genes,                             registered: false, registry_pr: null}
+infores:tair:                {name: TAIR (via Ensembl core xrefs),                         registered: false, registry_pr: null}
+infores:grin-global:         {name: USDA GRIN-Global,                                      registered: false, registry_pr: null}
+infores:grassius:            {name: GRASSIUS transcription factor families,                registered: false, registry_pr: null}
+infores:sorghum-qtl-atlas:   {name: Sorghum QTL Atlas,                                     registered: false, registry_pr: null}
+infores:gramene-qtldb:       {name: Gramene QTL database,                                  registered: false, registry_pr: null}
+infores:gramene-g2p:         {name: Gramene genotype-to-phenotype (BrAPI),                 registered: false, registry_pr: null}
+infores:sorghumbase:         {name: SorghumBase,                                           registered: false, registry_pr: null}
+infores:sorghumbase-curation: {name: SorghumBase curators (CSHL curated feed and KG curation API), registered: false, registry_pr: null}
+infores:gramene-kg:          {name: Gramene knowledge graph build,                         registered: false, registry_pr: null}

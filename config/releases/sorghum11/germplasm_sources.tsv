@@ -1,0 +1,10 @@
+stock_center	prefix	id_field	url_template	species	note
+ARS	ars	germplasm_dbid	https://npgsweb.ars-grin.gov/gringlobal/accessiondetail.aspx?id=$1	sorghum_bicolor	GRIN-Global accession id; USDA_GSOR rice stocks (pop 12) also carry ARS
+ICRISAT	icrisat	germplasm_dbid	https://genebank.icrisat.org/IND/PassportSummary?ID=$1	sorghum_bicolor	IS number; space removed in the id, kept in accessionNumber
+IRRI	irri	germplasm_dbid	https://www.irri.org/genesys-rice#/a/$1	oryza_sativa	IRRI/Genesys id, not USDA GRIN
+CNCG/CAAS	cncg	germplasm_dbid		oryza_sativa	CAAS national crop genebank id
+sorbmutdb	sorbmutdb	pub_id	https://www.depts.ttu.edu/igcast/sorbmutdb.php	sorghum_bicolor	no dbid; LBK mutant line
+WRC	unresolved	pub_id		oryza_sativa	dbid is 0
+JRC	unresolved	pub_id		oryza_sativa	dbid is 0
+NOT FOUND	unresolved	pub_id			dbid is 0
+	unresolved	pub_id			no stock_center; 49 docs, pub_id NOT FOUND falls back to a per-sample stub

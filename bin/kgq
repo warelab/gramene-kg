@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# kgq '<js expression over j>' — JSON field picker (jq is not installed on squam).
+#   curl -s localhost:12000/kg/v1/... | bin/kgq 'j.meta.degree.overlaps'
+exec node -e '
+let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
+  const j=JSON.parse(s); const v=(0,eval)("(j)=>("+process.argv[1]+")")(j);
+  console.log(typeof v==="string"?v:JSON.stringify(v));
+})' "${1:-j}"
