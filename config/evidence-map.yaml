@@ -35,6 +35,7 @@ families:
   gene_go:
     primary_knowledge_source: infores:ensembl-gene
     by_code:
+      missing: {knowledge_level: not_provided, agent_type: not_provided}   # empty code (e.g. all chlamydomonas GO xrefs)
       IEA: {knowledge_level: prediction, agent_type: automated_agent}
       default: {knowledge_level: knowledge_assertion, agent_type: manual_agent}
   gene_po_curated:          # keyed by source genome

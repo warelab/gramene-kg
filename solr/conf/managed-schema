@@ -150,6 +150,8 @@
   <field name="name_s" type="string" indexed="true" stored="true" docValues="true"/>
   <field name="name_t" type="text_general" indexed="true" stored="true"/>
   <field name="synonyms_t" type="text_general" indexed="true" stored="true" multiValued="true"/>
+  <field name="id_lc_s" type="string" indexed="true" stored="true"/>
+  <field name="local_id_lc_s" type="string" indexed="true" stored="true"/>
   <field name="aliases_lc_ss" type="string" indexed="true" stored="true" multiValued="true"/>
   <field name="description_t" type="text_general" indexed="true" stored="true"/>
   <field name="card_t" type="text_general" indexed="true" stored="true"/>

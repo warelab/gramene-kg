@@ -137,11 +137,11 @@ await writeNodes('GrameneTaxon', nodeSql('GrameneTaxon', ['biolink:OrganismTaxon
   id: 'tid', name: 'name', attrs: `to_json({rank: rank, synthetic: synthetic})` }));
 
 await exec(`CREATE TABLE trees AS SELECT * FROM ${rj('trees')}`);
-await writeNodes('GeneTree', nodeSql('GeneTree', ['biolink:GeneFamily'], 'trees', {
-  id: `'gramene.genetree:' || id`, name: `id || coalesce(' (' || root_taxon_name || ')', '')`,
-  in_taxon: `CASE WHEN root_taxon_id IS NULL THEN NULL ELSE 'NCBITaxon:' || root_taxon_id END`,
-  attrs: `to_json({compara_db: compara_db, root_taxon_id: root_taxon_id, root_taxon_name: root_taxon_name, root_node_type: node_type,
-    representative: representative, n_leaves: n_leaves, leafset_sha1: leafset_sha1})` }));
+await writeNodes('GeneTree', nodeSql('GeneTree', ['biolink:GeneFamily'], 'trees tr LEFT JOIN taxa tx ON tx.taxon_id = tr.root_taxon_id', {
+  id: `'gramene.genetree:' || tr.id`, name: `tr.id || coalesce(' (' || tr.root_taxon_name || ')', '')`,
+  in_taxon: `CASE WHEN tr.root_taxon_id IS NULL THEN NULL ELSE coalesce(tx.tid, 'NCBITaxon:' || tr.root_taxon_id) END`,
+  attrs: `to_json({compara_db: tr.compara_db, root_taxon_id: tr.root_taxon_id, root_taxon_name: tr.root_taxon_name, root_node_type: tr.node_type,
+    representative: tr.representative, n_leaves: tr.n_leaves, leafset_sha1: tr.leafset_sha1})` }));
 
 // ontology terms
 const goCat = `CASE namespace WHEN 'molecular_function' THEN ['biolink:MolecularActivity'] WHEN 'cellular_component' THEN ['biolink:CellularComponent'] ELSE ['biolink:BiologicalProcess'] END`;
@@ -168,13 +168,20 @@ await writeNodes('InterProEntry', nodeSql('InterProEntry', ['biolink:ProteinDoma
 const prefixes = (await q(`SELECT DISTINCT substr(id, 1, 5) AS p FROM ${rj('gene_pathway')}`)).map(r => r.p);
 await exec(`CREATE TABLE gp AS SELECT * FROM ${rj('gene_pathway')}`);
 await exec(`CREATE TABLE rel_pathways AS SELECT * FROM ${rj('pathways')}`);
+await exec(`CREATE TABLE prefix_taxon AS SELECT DISTINCT regexp_extract(gp.id, '^(R-[A-Z]+-)', 1) AS prefix, g.taxon_id AS taxon FROM gp JOIN genes g ON g.id = gp.gene`);
+await exec(`CREATE TABLE lineage_parent AS
+  SELECT DISTINCT pt.prefix || l.path[list_position(l.path, rp.base_id) - 1] AS parent, pt.prefix || rp.base_id AS event
+  FROM rel_pathways rp, unnest(rp.lineages) AS u(l) JOIN prefix_taxon pt ON pt.taxon = l.taxon
+  WHERE list_position(l.path, rp.base_id) > 1`);
 await exec(`CREATE TABLE reactome AS
   SELECT id, name, base_id::VARCHAR AS base_id, species, 'Pathway' AS event_type, parents FROM ${rj('ont_reactome')}
    WHERE substr(id, 1, 5) IN (${prefixes.map(sqlStr).join(',') || "''"})
   UNION ALL
-  SELECT DISTINCT gp.id, p.name, regexp_extract(gp.id, '^R-[A-Z]+-([0-9]+)', 1), NULL, coalesce(p.type, 'Reaction'), []::VARCHAR[]
-    FROM gp LEFT JOIN rel_pathways p ON p.base_id = regexp_extract(gp.id, '^R-[A-Z]+-([0-9]+)', 1)
-   WHERE gp.id NOT IN (SELECT id FROM ${rj('ont_reactome')})`);
+  SELECT gp.id, min(p.name), min(regexp_extract(gp.id, '^R-[A-Z]+-([0-9]+)', 1)), NULL, coalesce(min(p.type), 'Reaction'),
+         coalesce(list(DISTINCT lp.parent ORDER BY lp.parent) FILTER (WHERE lp.parent IS NOT NULL), []::VARCHAR[])
+    FROM (SELECT DISTINCT id FROM gp) gp LEFT JOIN rel_pathways p ON p.base_id = regexp_extract(gp.id, '^R-[A-Z]+-([0-9]+)', 1)
+    LEFT JOIN lineage_parent lp ON lp.event = gp.id
+   WHERE gp.id NOT IN (SELECT id FROM ${rj('ont_reactome')}) GROUP BY gp.id`);
 await writeNodes('PlantReactomeEvent', nodeSql('PlantReactomeEvent', ['biolink:Pathway'], 'reactome', {
   id: `'reactome:' || id`, name: 'name', attrs: `to_json({base_id: base_id, species: species, event_type: event_type})` }));
 
@@ -324,6 +331,8 @@ const stubCat = `CASE WHEN prefix IN ('UBERON','FBbt','BTO') THEN ['biolink:Anat
 await writeNodes('OntologyClassStub', nodeSql('OntologyClassStub', null, 'stubs', { id: 'id', category: stubCat, name: 'label', attrs: `to_json({stub: true, prefix: prefix})` }));
 
 // ---- TF families, collections -----------------------------------------------------------------
+counts.dropped.grassius_direct_gene_unknown = Number((await q(`SELECT count(*)::BIGINT n FROM ${rj('grassius')} x WHERE method = 'direct' AND x.gene NOT IN (SELECT id FROM genes)`))[0].n);
+counts.dropped.grassius_projection_non_anchor = Number((await q(`SELECT count(*)::BIGINT n FROM ${rj('grassius')} x WHERE method <> 'direct' AND x.gene NOT IN (SELECT id FROM anchor_genes)`))[0].n);
 await exec(`CREATE TABLE grassius AS SELECT x.* FROM ${rj('grassius')} x JOIN anchor_genes g ON g.id = x.gene`);
 await writeNodes('TranscriptionFactorFamily', nodeSql('TranscriptionFactorFamily', ['biolink:GeneFamily'], `(SELECT DISTINCT family FROM grassius)`, {
   id: `'gramene.tffamily:' || regexp_replace(family, '[^A-Za-z0-9_.-]', '_', 'g')`, name: 'family' }));
@@ -366,14 +375,17 @@ await writeEdges('gene_go', edgeSql('gene_go', `(SELECT g.gene, g.go, g.ec, min(
   subject: `'gramene.gene:' || gene`, object: 'go',
   predicate: `CASE namespace WHEN 'molecular_function' THEN 'biolink:enables' WHEN 'cellular_component' THEN 'biolink:located_in' ELSE 'biolink:actively_involved_in' END`,
   pks: F.gene_go.primary_knowledge_source,
-  kl: `sql:CASE WHEN ec = 'IEA' THEN ${sqlStr(F.gene_go.by_code.IEA.knowledge_level)} ELSE ${sqlStr(F.gene_go.by_code.default.knowledge_level)} END`,
-  at: `sql:CASE WHEN ec = 'IEA' THEN ${sqlStr(F.gene_go.by_code.IEA.agent_type)} ELSE ${sqlStr(F.gene_go.by_code.default.agent_type)} END`,
+  kl: `sql:CASE WHEN coalesce(ec, '') = '' THEN 'not_provided' WHEN ec = 'IEA' THEN ${sqlStr(F.gene_go.by_code.IEA.knowledge_level)} ELSE ${sqlStr(F.gene_go.by_code.default.knowledge_level)} END`,
+  at: `sql:CASE WHEN coalesce(ec, '') = '' THEN 'not_provided' WHEN ec = 'IEA' THEN ${sqlStr(F.gene_go.by_code.IEA.agent_type)} ELSE ${sqlStr(F.gene_go.by_code.default.agent_type)} END`,
   ev: `sql:list_filter([CASE ec ${goEco} END], lambda x: x IS NOT NULL)`,
   oev: 'ec', oobj: 'raw', rec: `${RELEASE}.genes.xrefs[db=GO]`, ksv: V.go, qualifiers: `to_json({evidence: ec})` }));
 
 // curated PO (anatomy -> expressed_in, stage -> expressed_during) and TO (has_phenotype)
 const byGenome = (fam, key) => `sql:CASE system_name ${Object.entries(F[fam]).filter(([k]) => k !== 'default').map(([k, v]) => `WHEN ${sqlStr(k)} THEN ${sqlStr(v[key])}`).join(' ')} ELSE ${sqlStr(F[fam].default[key])} END`;
 const byGenomeList = (fam) => `sql:CASE system_name ${Object.entries(F[fam]).filter(([k]) => k !== 'default').map(([k, v]) => `WHEN ${sqlStr(k)} THEN ${LIST(v.has_evidence)}`).join(' ')} ELSE ${LIST(F[fam].default.has_evidence)} END`;
+counts.dropped.po_xref_term_unknown = Number((await q(`SELECT count(*)::BIGINT n FROM xref WHERE db = 'PO' AND id NOT IN (SELECT id FROM ont_po)`))[0].n);
+counts.dropped.to_xref_term_unknown = Number((await q(`SELECT count(*)::BIGINT n FROM xref WHERE db = 'TO' AND id NOT IN (SELECT id FROM ont_to)`))[0].n);
+counts.dropped.go_xref_term_unknown = Number((await q(`SELECT count(*)::BIGINT n FROM gene_go WHERE go NOT IN (SELECT id FROM ont_go)`))[0].n);
 await writeEdges('gene_po', edgeSql('gene_po', `(SELECT DISTINCT x.gene, x.id, x.ec, x.system_name, t.namespace FROM xref x JOIN ont_po t ON t.id = x.id WHERE x.db = 'PO')`, {
   subject: `'gramene.gene:' || gene`, object: 'id',
   predicate: `CASE WHEN namespace = 'plant_structure_development_stage' THEN 'gramene:expressed_during' ELSE 'biolink:expressed_in' END`,
@@ -387,14 +399,15 @@ await writeEdges('gene_domain', edgeSql('gene_domain', `(SELECT DISTINCT gene, i
   subject: `'gramene.gene:' || gene`, object: `'interpro:' || id`, predicate: `'gramene:has_domain'`,
   pks: F.gene_domain.primary_knowledge_source, kl: F.gene_domain.knowledge_level, at: F.gene_domain.agent_type, ev: F.gene_domain.has_evidence,
   rec: `${RELEASE}.genes.xrefs[db=domains]`, ksv: V.interpro }));
-await writeEdges('gene_pathway', edgeSql('gene_pathway', `(SELECT DISTINCT gp.gene, gp.id, r.evidence FROM gp
-    LEFT JOIN (SELECT gene, pathway, min(evidence) AS evidence FROM ${rj('ont_reactome_genes')} GROUP BY ALL) r ON r.gene = gp.gene AND r.pathway = gp.id)`, {
-  subject: `'gramene.gene:' || gene`, object: `'reactome:' || id`, predicate: `'biolink:participates_in'`, pks: F.gene_pathway.by_evidence.default.primary_knowledge_source,
-  kl: `sql:CASE WHEN evidence = 'TAS' THEN 'knowledge_assertion' ELSE ${sqlStr(F.gene_pathway.by_evidence.default.knowledge_level)} END`,
-  at: `sql:CASE WHEN evidence = 'TAS' THEN 'manual_agent' ELSE ${sqlStr(F.gene_pathway.by_evidence.default.agent_type)} END`,
-  ev: `sql:CASE WHEN evidence = 'TAS' THEN ['ECO:0000304'] ELSE []::VARCHAR[] END`, oev: `coalesce(evidence, 'none')`,
-  rec: `${RELEASE}.genes.annotations.pathways`, ksv: V.reactome }));
-await writeEdges('reactome_parent', edgeSql('reactome_parent', `(SELECT id, unnest(parents) AS parent FROM reactome WHERE len(parents) > 0)`, {
+// No per-association evidence is available: genes carry reaction ids while plant_reactome_genes
+// holds lowest-level pathway ids, and every non-rice row there says 'none'. Rice TAS rows need a
+// UniProt -> gene mapping (M4). So original_evidence stays NULL rather than a synthetic value.
+await writeEdges('gene_pathway', edgeSql('gene_pathway', `(SELECT DISTINCT gene, id FROM gp)`, {
+  subject: `'gramene.gene:' || gene`, object: `'reactome:' || id`, predicate: `'biolink:participates_in'`,
+  pks: F.gene_pathway.by_evidence.default.primary_knowledge_source, kl: F.gene_pathway.by_evidence.default.knowledge_level,
+  at: F.gene_pathway.by_evidence.default.agent_type, ev: [], rec: `${RELEASE}.genes.annotations.pathways`, ksv: V.reactome }));
+counts.dropped.reactome_parent_unknown = Number((await q(`SELECT count(*)::BIGINT n FROM (SELECT unnest(parents) AS parent FROM reactome) WHERE parent NOT IN (SELECT id FROM reactome)`))[0].n);
+await writeEdges('reactome_parent', edgeSql('reactome_parent', `(SELECT id, parent FROM (SELECT id, unnest(parents) AS parent FROM reactome) WHERE parent IN (SELECT id FROM reactome))`, {
   subject: `'reactome:' || id`, object: `'reactome:' || parent`, predicate: `'biolink:part_of'`, pks: 'infores:plant-reactome',
   kl: 'knowledge_assertion', at: 'manual_agent', rec: 'ontology.plant_reactome.parents', ksv: V.reactome }));
 

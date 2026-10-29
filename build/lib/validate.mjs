@@ -67,6 +67,17 @@ gate('no expressed_in edge points at a PO stage term', stageExpr === 0, `${stage
 const maxQ = await q(`SELECT object, count(*)::BIGINT n FROM edges WHERE family = 'gene_qtl' GROUP BY 1 ORDER BY 2 DESC LIMIT 1`);
 gate('per-QTL containment fan-out <= 10,000', !maxQ.length || maxQ[0].n <= 10000, maxQ.length ? `max ${maxQ[0].n} (${maxQ[0].object})` : '');
 
+// ---- node reference fields resolve ------------------------------------------------------------
+await exec(`CREATE TABLE node_refs AS SELECT cls, 'in_taxon' AS field, in_taxon AS ref FROM nodes WHERE in_taxon IS NOT NULL
+  UNION ALL SELECT cls, 'genome', genome FROM nodes WHERE genome IS NOT NULL UNION ALL SELECT cls, 'tree', tree FROM nodes WHERE tree IS NOT NULL`);
+const badRefs = await q(`SELECT cls, field, count(*)::BIGINT n, min(ref) ex FROM node_refs r WHERE NOT EXISTS (SELECT 1 FROM node_ids n WHERE n.id = r.ref) GROUP BY ALL`);
+gate('node in_taxon / genome / tree fields reference existing nodes', badRefs.length === 0, badRefs.map(r => `${r.cls}.${r.field}: ${r.n} e.g. ${r.ex}`).join('; '));
+const unevidenced = await one(`SELECT count(*) FROM edges WHERE family = 'gene_go' AND knowledge_level = 'knowledge_assertion' AND len(has_evidence) = 0`);
+gate('every knowledge_assertion GO edge carries an ECO code', unevidenced === 0, `${unevidenced} without`);
+const pwTotal = await one(`SELECT count(DISTINCT object) FROM edges WHERE family = 'gene_pathway'`);
+const pwLinked = await one(`SELECT count(DISTINCT e.object) FROM edges e WHERE e.family = 'gene_pathway' AND e.object IN (SELECT subject FROM edges WHERE family = 'reactome_parent')`);
+gate('pathway events reached by genes link up to a parent pathway (>= 80%)', pwTotal === 0 || pwLinked / pwTotal >= 0.8, `${pwLinked}/${pwTotal}`);
+
 // ---- id patterns ----------------------------------------------------------------------------
 const rules = [...Object.entries(PREF.external).map(([p, v]) => [p, v.pattern]), ...Object.entries(PREF.local)];
 const caseSql = rules.map(([p, re]) => `WHEN prefix = ${sqlStr(p)} THEN regexp_full_match(local, ${sqlStr(re.replace(/^\^|\$$/g, ''))})`).join(' ');
@@ -129,16 +140,17 @@ if (MODE === 'record') {
   warn('expectations', `recorded to ${EXP_FILE} (record mode; counts are not gated this run)`);
 } else {
   const exp = JSON.parse(fs.readFileSync(EXP_FILE, 'utf8'));
+  let countFails = 0;
   for (const kind of ['nodes', 'edges']) for (const [k, want] of Object.entries(exp[kind])) {
     if (NO_GATE.has(k)) continue;
     const have = counts[kind][k] ?? 0;
     if (have === 0 && process.env.NO_VARIANTS === '1' && /variant|lof|expressed|expression_detected/.test(k)) continue;
     const rel = want ? Math.abs(have - want) / want : (have ? 1 : 0);
-    if (rel > (exp.tolerance ?? TOL)) gate(`count ${kind}.${k} ${have} within ${(exp.tolerance ?? TOL) * 100}% of ${want}`, false);
+    if (rel > (exp.tolerance ?? TOL)) { countFails++; gate(`count ${kind}.${k} ${have} within ${(exp.tolerance ?? TOL) * 100}% of ${want}`, false); }
   }
   const newKeys = ['nodes', 'edges'].flatMap(kind => Object.keys(counts[kind]).filter(k => !(k in exp[kind])).map(k => `${kind}.${k}`));
   if (newKeys.length) gate('no unexpected node classes / edge families (re-record expectations to add)', false, newKeys.join(', '));
-  else gate('counts within expectations', true, `tolerance ${(exp.tolerance ?? TOL) * 100}%`);
+  else if (!countFails) gate('counts within expectations', true, `tolerance ${(exp.tolerance ?? TOL) * 100}%`);
 }
 
 fs.writeFileSync(buildOut('validation.json'), JSON.stringify({ mode: MODE, failed, results }, null, 1));

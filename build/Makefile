@@ -20,10 +20,14 @@ STAGES := kg00_preflight kg05_catalogue kg10_extract kg20_transform kg25_publica
 
 # NEW_BUILD=1 starts a new build at kg00 (which mints BUILD_ID and clears later stamps);
 # otherwise the chain resumes from the first missing stamp.
+# build/promote hold the per-release lock for the whole run (one build at a time).
+LOCK = mkdir -p $(S) && flock -n $(S)/build.lock env KG_LOCK_HELD=1
 build:
-	@if [ "$(NEW_BUILD)" = 1 ]; then bash $(ST)/kg00_preflight.sh; fi
-	$(MAKE) --no-print-directory $(S)/kg70_solr.done NEW_BUILD=
-promote: kg80_promote
+	@$(LOCK) bash -c 'if [ "$(NEW_BUILD)" = 1 ]; then bash $(ST)/kg00_preflight.sh || exit 1; fi; \
+	  $(MAKE) --no-print-directory $(S)/kg70_solr.done NEW_BUILD=' \
+	  || { echo "build failed or lock held (another build of $(RELEASE) running?)"; exit 1; }
+promote:
+	@$(LOCK) $(MAKE) --no-print-directory kg80_promote || { echo "promote failed or lock held"; exit 1; }
 
 # stage -> previous stage (the stamp that must exist)
 prev_kg05_catalogue := kg00_preflight
@@ -47,7 +51,9 @@ $(foreach s,$(filter-out kg00_preflight,$(STAGES)),$(eval $(call STAGE_RULES,$(s
 
 status:
 	@echo "release=$(RELEASE) build_id=$$(cat $(S)/build_id 2>/dev/null || echo none)"
-	@for s in $(STAGES); do if [ -f $(S)/$$s.done ]; then echo "  [x] $$s ($$(cat $(S)/$$s.done))"; else echo "  [ ] $$s"; fi; done
+	@b=$$(cat $(S)/build_id 2>/dev/null); for s in $(STAGES); do \
+	  if [ -f $(S)/$$s.done ] && [ "$$(cut -d' ' -f1 $(S)/$$s.done)" = "$$b" ]; then echo "  [x] $$s ($$(cut -d' ' -f2 $(S)/$$s.done))"; \
+	  elif [ -f $(S)/$$s.done ]; then echo "  [?] $$s (stamp from another build: $$(cat $(S)/$$s.done))"; else echo "  [ ] $$s"; fi; done
 
 clean-stamps: ; rm -f $(S)/*.done
 

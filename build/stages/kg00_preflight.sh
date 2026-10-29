@@ -49,6 +49,9 @@ while read -r tree; do
   if [ -n "$busy" ]; then printf "%s\n" "$busy" >&2; fi
 done < "${KG_ROOT}/config/build_trees.txt"
 gate "no genes decorate running" "! pgrep -f 'decorate\.js' >/dev/null"
+# kg stages of this release from another process (the build lock covers make; this covers stray runs)
+others="$(pgrep -af 'stages/kg[0-9]+_[a-z_]+\.sh' | grep -v -e "^$$ " -e "^${PPID} " -e 'kg00_preflight' || true)"
+gate "no other gramene-kg stage running" "[ -z \"\$others\" ]"
 
 # --- host headroom -----------------------------------------------------------------------------
 memavail=$(awk '/MemAvailable/{print int($2/1048576)}' /proc/meminfo)
@@ -66,8 +69,8 @@ gate "/solr free $(dfree /solr) GB > 10" "[ $(dfree /solr) -gt 10 ]"
 if [ -z "${BUILD_ID}" ] || [ "${NEW_BUILD:-0}" = 1 ]; then
   BUILD_ID="$(date '+%Y%m%d%H%M')"
   echo "${BUILD_ID}" > "${STATE_DIR}/build_id"
-  # a new build invalidates every later stamp
-  find "${STATE_DIR}" -name 'kg[0-9]*.done' ! -name 'kg00_preflight.done' -delete
+  # a new build invalidates every later stamp (stamps are per build id anyway)
+  clear_downstream kg00_preflight
   log "minted BUILD_ID=${BUILD_ID}"
 fi
 export BUILD_ID KG_DB="kg_${RELEASE}_b${BUILD_ID}"

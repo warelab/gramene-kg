@@ -1,6 +1,6 @@
 {
- "recorded_at": "2026-10-29T19:05:01.686Z",
- "build_id": "202610291429",
+ "recorded_at": "2026-10-29T19:38:59.745Z",
+ "build_id": "202610291519",
  "tolerance": 0.1,
  "nodes": {
   "AnalysisRun": 4,
@@ -19,8 +19,8 @@
   "IngestRun": 1,
   "InterProEntry": 55663,
   "KgCollection": 25,
-  "KgDataset": 168,
-  "KgDistribution": 158,
+  "KgDataset": 166,
+  "KgDistribution": 156,
   "KgRelease": 1,
   "OntologyClassStub": 407,
   "PlantAnatomyTerm": 1455,
@@ -56,7 +56,7 @@
   "pub_mentions": 34270,
   "qtl_genome": 12966,
   "qtl_trait": 13043,
-  "reactome_parent": 1943,
+  "reactome_parent": 7565,
   "sample_accession": 8325,
   "sample_population": 8347,
   "taxon_parent": 94,

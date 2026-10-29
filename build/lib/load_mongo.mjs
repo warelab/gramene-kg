@@ -25,11 +25,13 @@ await exec(`COPY (SELECT id, category, cls, name, description, aliases, xrefs, i
   FROM ${FINAL('nodes')}) TO ${sqlStr(nodesNd)} (FORMAT json)`);
 const client = await MongoClient.connect(env('MONGO_URI'), { maxPoolSize: 8 });
 const db = client.db(KG_DB);
+const lc = (a) => a.length ? [...new Set(a.map(x => String(x).toLowerCase()))] : null;
 const meta = { release: RELEASE, build_id: BUILD_ID, ingest_run: RUN };
 let t0 = Date.now();
 const nNodes = await swapIn(db, 'nodes', ndjson(nodesNd, (r) => clean({
   _id: r.id, cat: r.category, cls: r.cls, name: r.name, desc: r.description, aliases: r.aliases,
-  aliases_lc: r.aliases?.length ? [...new Set(r.aliases.map(a => String(a).toLowerCase()))] : null,
+  // aliases plus doi: xrefs, so a DOI resolves to its PMID-keyed publication
+  aliases_lc: lc([...(r.aliases ?? []), ...(r.xrefs ?? []).filter(x => String(x).startsWith('doi:'))]),
   xrefs: r.xrefs, tax: r.in_taxon, genome: r.genome, tree: r.tree,
   loc: r.region != null ? clean({ region: r.region, start: r.start, end: r.end, strand: r.strand }) : null,
   attrs: clean(JSON.parse(r.attrs || '{}')), deg: JSON.parse(r.deg || '{}'), degree: r.degree, solr: r.solr || null, card: r.card,

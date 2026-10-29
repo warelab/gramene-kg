@@ -41,7 +41,7 @@ await exec(`COPY (
 
 const safe = (k) => k.replace(/[^A-Za-z0-9]+/g, '_').replace(/^_|_$/g, '');
 const toDoc = (r) => {
-  const d = { id: r.id, category_ss: r.category, category_leaf_s: r.cls, name_s: r.name, name_t: r.name, description_t: r.description,
+  const d = { id: r.id, id_lc_s: r.id.toLowerCase(), local_id_lc_s: r.id.slice(r.id.indexOf(':') + 1).toLowerCase(), category_ss: r.category, category_leaf_s: r.cls, name_s: r.name, name_t: r.name, description_t: r.description,
     synonyms_t: r.aliases, aliases_lc_ss: r.aliases?.map(a => String(a).toLowerCase()), card_t: r.card, xref_ss: r.xrefs,
     release_s: RELEASE, build_s: BUILD_ID, taxon_s: r.in_taxon, genome_s: r.genome, system_name_s: r.system_name, biotype_s: r.biotype,
     region_s: r.region, start_l: r.start, end_l: r.end, degree_i: r.degree, source_ss: r.sources, is_stub_b: r.stub,

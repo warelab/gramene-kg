@@ -10,9 +10,39 @@ warn() { echo "[$(_ts)] ⚠ $*" >&2; }
 die()  { echo "[$(_ts)] FATAL: $*" >&2; exit 1; }
 run()  { log "+ $*"; "$@"; }
 
-stamp_done()  { mkdir -p "${STATE_DIR}"; date '+%Y-%m-%dT%H:%M:%S' > "${STATE_DIR}/$1.done"; }
+# Stage order; a stage that starts clears the stamps of every stage after it, so a re-run upstream
+# can never leave downstream stamps describing older artifacts.
+KG_STAGE_ORDER=(kg00_preflight kg05_catalogue kg10_extract kg20_transform kg25_publications kg30_validate
+                kg40_cards_degree kg60_load_mongo kg70_solr kg80_promote)
+# A stamp records the build it belongs to: "<BUILD_ID> <timestamp>".
+stamp_done()  { mkdir -p "${STATE_DIR}"; echo "${BUILD_ID} $(date '+%Y-%m-%dT%H:%M:%S')" > "${STATE_DIR}/$1.done"; }
 stamp_clear() { rm -f "${STATE_DIR}/$1.done"; }
-is_done()     { [ -f "${STATE_DIR}/$1.done" ]; }
+is_done()     { [ -f "${STATE_DIR}/$1.done" ] && [ "$(cut -d' ' -f1 "${STATE_DIR}/$1.done")" = "${BUILD_ID}" ]; }
+clear_downstream() {
+  local seen=0 s
+  for s in "${KG_STAGE_ORDER[@]}"; do
+    if [ "$seen" = 1 ]; then stamp_clear "$s"; fi
+    [ "$s" = "$1" ] && seen=1
+  done
+  return 0
+}
+
+# One build at a time per release. `make build/promote` hold the lock for the whole run and export
+# KG_LOCK_HELD=1; a stage run on its own takes it here.
+take_lock() {
+  [ "${KG_LOCK_HELD:-0}" = 1 ] && return 0
+  exec 9>"${STATE_DIR}/build.lock"
+  flock -n 9 || die "another gramene-kg build of ${RELEASE} holds ${STATE_DIR}/build.lock"
+}
+
+# Stages that write build artifacts refuse the promoted build's directory (no Mongo needed).
+assert_not_live_artifacts() {
+  local cur="${RELEASE_BUILDS}/current"
+  if [ -e "$cur" ] && [ -n "${BUILD_ID}" ] && [ "$(readlink -f "$cur")" = "$(readlink -f "${BUILD_OUT}")" ] && [ "${FORCE_LIVE:-0}" != 1 ]; then
+    die "build ${BUILD_ID} is the promoted build of ${RELEASE}; its artifacts are read by the API and eval. Start a new build (NEW_BUILD=1) or set FORCE_LIVE=1"
+  fi
+  return 0
+}
 
 # read a value from the release yaml: yget inputs.rsid_table
 yget() { "${PY}" -c 'import sys,yaml
@@ -33,6 +63,9 @@ require_build_id() { [ -n "${BUILD_ID}" ] || die "no BUILD_ID: run kg00_prefligh
 
 stage_begin() {
   STAGE_NAME="$1"
+  take_lock
+  case "${STAGE_NAME}" in kg00_preflight|kg80_promote) ;; *) assert_not_live_artifacts ;; esac
+  clear_downstream "${STAGE_NAME}"
   mkdir -p "${LOG_DIR}"
   exec > >(tee -a "${LOG_DIR}/${STAGE_NAME}.log") 2>&1
   log "════════ STAGE ${STAGE_NAME} release=${RELEASE} build=${BUILD_ID:-new} ════════"

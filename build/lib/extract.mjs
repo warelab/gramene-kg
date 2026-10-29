@@ -140,11 +140,15 @@ if (want('reactome')) {
   const taxids = [...new Set(maps.filter(m => m.is_anchor).map(m => m.anchor_taxon_id))];
   await dumpCollection('ont_reactome', ont.collection('plant_reactome'), {}, undefined,
     d => ({ id: d._id, base_id: d.base_id ?? null, name: d.name ?? null, species: d.species ?? null, taxid: d.taxid ?? null, parents: d.parents ?? [] }));
-  await dumpCollection('ont_reactome_genes', ont.collection('plant_reactome_genes'), { taxid: { $in: taxids.concat([4530]) } }, undefined,
+  await dumpCollection('ont_reactome_genes', ont.collection('plant_reactome_genes'), { taxid: { $in: taxids } }, undefined,
     d => ({ gene: d.gene_id, pathway: d.pathway, source: d.source ?? null, evidence: d.evidence ?? null, taxid: d.taxid }));
   // release pathways: lineage per species taxon gives reaction -> parent pathways
-  await dumpCollection('pathways', src.collection('pathways'), {}, { _id: 1, name: 1, type: 1, ancestors: 1 },
-    d => ({ base_id: String(d._id), name: d.name ?? null, type: d.type ?? null }));
+  // per-anchor lineage paths ([[root, ..., event]]) keyed by release taxon id: the only source of
+  // reaction -> parent pathway links for events that the shared ontology db does not carry
+  const anchorTaxa = maps.filter(m => m.is_anchor).map(m => m.taxon_id);
+  await dumpCollection('pathways', src.collection('pathways'), {}, undefined,
+    d => ({ base_id: String(d._id), name: d.name ?? null, type: d.type ?? null,
+      lineages: anchorTaxa.flatMap(t => (d[`lineage_${t}`] ?? []).map(path => ({ taxon: t, path: path.map(String) }))) }));
 }
 if (want('ncbi_taxonomy')) {
   const ids = (await src.collection('taxonomy').distinct('_id', { rank: { $ne: 'genome' } }));
