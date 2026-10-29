@@ -13,13 +13,21 @@ ST := stages
 RELEASE := $(shell RELEASE_ROOT=$(RELEASE_ROOT) bash -c '. ./config.sh >/dev/null 2>&1 && echo $$RELEASE')
 S := ../.state/$(RELEASE)
 
-STAGES := kg00_preflight kg05_catalogue
+STAGES := kg00_preflight kg05_catalogue kg10_extract kg20_transform kg25_publications kg30_validate
 .PHONY: build status codegen clean-stamps $(STAGES)
 
-build: kg05_catalogue
+build: kg30_validate
 
 kg00_preflight: ; bash $(ST)/kg00_preflight.sh
 kg05_catalogue: $(S)/kg00_preflight.done ; bash $(ST)/kg05_catalogue.sh
+kg10_extract: $(S)/kg05_catalogue.done ; bash $(ST)/kg10_extract.sh
+$(S)/kg10_extract.done: $(S)/kg05_catalogue.done ; bash $(ST)/kg10_extract.sh
+kg20_transform: $(S)/kg10_extract.done ; bash $(ST)/kg20_transform.sh
+$(S)/kg20_transform.done: $(S)/kg10_extract.done ; bash $(ST)/kg20_transform.sh
+kg25_publications: $(S)/kg20_transform.done ; bash $(ST)/kg25_publications.sh
+$(S)/kg25_publications.done: $(S)/kg20_transform.done ; bash $(ST)/kg25_publications.sh
+kg30_validate: $(S)/kg25_publications.done ; bash $(ST)/kg30_validate.sh
+$(S)/kg05_catalogue.done: $(S)/kg00_preflight.done ; bash $(ST)/kg05_catalogue.sh
 $(S)/kg00_preflight.done: ; bash $(ST)/kg00_preflight.sh
 
 status:
