@@ -2,3 +2,5 @@
 {"api":"http://127.0.0.1:12000","n":30,"gold_hits":30,"gold_rate":1,"citation_rate":1,"p95_ms":5,"at":"2026-10-29T19:57:52.118Z"}
 {"api":"http://127.0.0.1:12000","n":30,"gold_hits":30,"gold_rate":1,"citation_rate":1,"p95_ms":5,"at":"2026-10-29T19:57:57.048Z"}
 {"api":"http://127.0.0.1:12000","n":30,"gold_hits":30,"gold_rate":1,"citation_rate":1,"p95_ms":4,"at":"2026-10-29T20:26:36.578Z"}
+{"api":"http://127.0.0.1:12000","n":50,"gold_hits":45,"gold_rate":0.9,"citation_rate":1,"p95_ms":34,"at":"2026-10-29T22:36:35.088Z"}
+{"api":"http://127.0.0.1:12000","n":50,"gold_hits":50,"gold_rate":1,"citation_rate":1,"p95_ms":31,"at":"2026-10-29T22:36:41.633Z"}

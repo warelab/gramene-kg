@@ -1,4 +1,4 @@
-// Eval runner against the REST API (M1a). M2 adds the MCP variant.
+// Eval runner against the REST API (M1a + M1b layers). M2 adds the MCP variant.
 //   KG_API_URL=http://127.0.0.1:12000 node --test eval/run.test.mjs
 // (node --test rejects extra CLI flags, so the endpoint comes from the environment.)
 import { test } from 'node:test';
@@ -25,10 +25,13 @@ for (const q of Q) {
     } else if (q.kind === 'gene_facts') {
       const { body } = await get(q.plan[0]);
       ok = body.data.gene_tree === q.gold.tree && body.data.genome === q.gold.genome;
+    } else if (q.kind === 'derived_homologs') {
+      const { body } = await get(q.plan[0]);
+      ok = JSON.stringify(Object.fromEntries(Object.entries(body.data.by_kind).sort())) === JSON.stringify(Object.fromEntries(Object.entries(q.gold.by_kind).sort()));
     } else {
       const { body } = await get(q.plan[0] + '&limit=500');
       const ids = body.data.map(e => e.direction === 'in' ? e.subject : e.object).sort();
-      const want = q.gold.genes ?? q.gold.publications ?? q.gold.populations;
+      const want = q.gold.genes ?? q.gold.publications ?? q.gold.populations ?? q.gold.ids;
       ok = JSON.stringify(ids) === JSON.stringify([...want].sort());
       cited = cites(body, q.must_cite);
     }

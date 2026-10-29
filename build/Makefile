@@ -14,8 +14,8 @@ ST := stages
 RELEASE := $(shell RELEASE_ROOT=$(RELEASE_ROOT) bash -c '. ./config.sh >/dev/null 2>&1 && echo $$RELEASE')
 S := ../.state/$(RELEASE)
 
-STAGES := kg00_preflight kg05_catalogue kg10_extract kg20_transform kg25_publications kg30_validate \
-          kg40_cards_degree kg60_load_mongo kg70_solr kg80_promote
+STAGES := kg00_preflight kg05_catalogue kg10_extract kg15_derived kg20_transform kg25_publications kg30_validate \
+          kg40_cards_degree kg50_export kg60_load_mongo kg70_solr kg80_promote
 .PHONY: build promote status codegen clean-stamps $(STAGES)
 
 # NEW_BUILD=1 starts a new build at kg00 (which mints BUILD_ID and clears later stamps);
@@ -32,11 +32,13 @@ promote:
 # stage -> previous stage (the stamp that must exist)
 prev_kg05_catalogue := kg00_preflight
 prev_kg10_extract := kg05_catalogue
-prev_kg20_transform := kg10_extract
+prev_kg15_derived := kg10_extract
+prev_kg20_transform := kg15_derived
 prev_kg25_publications := kg20_transform
 prev_kg30_validate := kg25_publications
 prev_kg40_cards_degree := kg30_validate
-prev_kg60_load_mongo := kg40_cards_degree
+prev_kg50_export := kg40_cards_degree
+prev_kg60_load_mongo := kg50_export
 prev_kg70_solr := kg60_load_mongo
 prev_kg80_promote := kg70_solr
 

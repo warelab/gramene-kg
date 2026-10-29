@@ -103,8 +103,8 @@ addGlob(I.expression_pipeline, /^(manifest\.json|expression_panel\.json|inv_\d+\
 const okDate = mtimeIso(I.rsid_ok).slice(0, 10);
 const rsidDs = ds('rsid-projection-anchor', okDate, { description: 'EVA rsIDs windowed onto sorghum_bicolor genes (anchor genome)' });
 add(I.rsid_table, rsidDs, 'variation'); add(I.rsid_ok, rsidDs, 'variation'); add(I.rsid_vcf, rsidDs, 'variation');
-const vepDs = ds('vep-lof-table', 'v10', { description: 'Per-gene VEP LoF sample table reused by v11 (lineage: v9 sorghum_vep.txt2)' });
-add(I.vep_table, vepDs, 'variation'); add(fs.realpathSync(I.vep_lineage), vepDs, 'variation');
+const vepDs = ds('vep-lof-table', 'v11', { description: 'Per-gene VEP LoF sample calls (v11 long table, SGT population 9 removed; lineage: v10 wide table, v9 sorghum_vep.txt2)' });
+add(I.vep_long, vepDs, 'variation'); add(I.vep_table, vepDs, 'variation'); add(fs.realpathSync(I.vep_lineage), vepDs, 'variation');
 const grinDs = ds('grin-global-sorghum-export', path.basename(I.grin_export).match(/(\d{4}-\d{2}-\d{2})/)?.[1] ?? 'unknown', {
   description: 'GRIN-Global BrAPI germplasm export staged in gramene-g2p test@1', source_url: 'https://npgsweb.ars-grin.gov/gringlobal/brapi/v2/germplasm',
 });
@@ -208,7 +208,7 @@ const analyses = [
     ended_at: stageStamps['58_expression_attributes'] ?? null },
   { id: `gramene.analysis:rsid-windowing@${sha256Text(JSON.stringify(rsidParams)).slice(0, 12)}`, name: 'rsID projection and CDS windowing',
     used: distsOf(rsidDs), parameters: JSON.stringify(rsidParams), ended_at: stageStamps['62_attr_atomic_rsid'] ?? null },
-  { id: 'gramene.analysis:vep-lof-table@v10', name: 'per-gene VEP LoF sample table',
+  { id: 'gramene.analysis:vep-lof-table@v11', name: 'per-gene VEP LoF sample table',
     description: 'dump_gene_level_VEP_table.pl over sorghum_bicolor_variation_11_108_30; VEP version not recorded',
     used: distsOf(vepDs), parameters: JSON.stringify({ variation_dbs: comparaNames.variations }) },
   { id: `gramene.analysis:qtl-containment@${(kgSha ?? '0000000').slice(0, 7)}`, name: 'gene-in-QTL interval containment',

@@ -100,9 +100,16 @@ const cross = [
   ['genes with publication mentions', `SELECT count(DISTINCT object) FROM edges WHERE family = 'pub_mentions' AND starts_with(object, 'gramene.gene:')`, 'capabilities:pubs', 0.02],
   ['genes inside a QTL', `SELECT count(DISTINCT subject) FROM edges WHERE family = 'gene_qtl'`, 'capabilities:QTL_TO', 0.05],
   ['genes with a pathway edge', `SELECT count(DISTINCT subject) FROM edges WHERE family = 'gene_pathway'`, 'capabilities:pathways', 0.01],
+  // M1b layers (skipped when the family is absent, e.g. NO_VARIANTS=1). LoF is not cross-checked: the core's
+  // VEP capability still counts the 3,323 genes whose only calls were in the excluded SGT population.
+  ['genes with rsID variants', `SELECT count(DISTINCT object) FROM edges WHERE family = 'variant_gene'`, 'rsid__attr_ss:*', 0, 'variant_gene'],
+  ['genes with organ expression calls', `SELECT count(DISTINCT subject) FROM edges WHERE family = 'organ_expression'`, 'expr_organ_level__attr_ss:*', 0.001, 'organ_expression'],
+  ['genes with expression detected in an experiment', `SELECT count(DISTINCT subject) FROM edges WHERE family = 'expression_detected'`, 'expressed_in_gxa_attr_ss:*', 0, 'expression_detected'],
 ];
 const crossOut = {};
-for (const [name, sql, fq, tol] of cross) {
+const families = new Set((await q(`SELECT DISTINCT family FROM edges`)).map(r => r.family));
+for (const [name, sql, fq, tol, fam] of cross) {
+  if (fam && !families.has(fam)) continue;
   const kg = await one(sql); const solr = await solrCount(fq);
   crossOut[name] = { kg, solr };
   if (solr == null) { warn(`cross-check ${name}`, 'Solr unreachable'); continue; }
@@ -125,7 +132,7 @@ const counts = {
   edges: Object.fromEntries((await q(`SELECT family, count(*)::BIGINT n FROM edges GROUP BY 1 ORDER BY 1`)).map(r => [r.family, Number(r.n)])),
   edges_materialised: await one(`SELECT count(*) FROM edges WHERE NOT slot`),
   edges_slot: await one(`SELECT count(*) FROM edges WHERE slot`),
-  solr_docs: await one(`SELECT count(*) FROM nodes WHERE cls NOT IN ('GeneModel') OR json_extract(attrs, '$.anchor')::BOOLEAN`),
+  solr_docs: await one(`SELECT count(*) FROM nodes WHERE cls <> 'SequenceVariant' AND (cls <> 'GeneModel' OR json_extract(attrs, '$.anchor')::BOOLEAN)`),   // same set as cards.mjs card_set
   cross_checks: crossOut,
 };
 counts.nodes_total = Object.values(counts.nodes).reduce((a, b) => a + b, 0);

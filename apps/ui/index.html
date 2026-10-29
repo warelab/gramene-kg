@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Gramene KG</title>
+<!-- absolute-path-free: works at /kg/ui/ and at /kg/ui/index.html; module paths resolve against this document -->
+<link rel="stylesheet" href="style.css">
+<script type="module" src="app.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site">
+  <div class="brand"><a href="#/search">Gramene <abbr title="knowledge graph">KG</abbr></a></div>
+  <nav aria-label="Main">
+    <a href="#/search" data-page="search">Search</a>
+    <a href="#/release" data-page="release">Release</a>
+  </nav>
+  <form id="search-form" role="search" autocomplete="off">
+    <label for="q" class="sr-only">Search the knowledge graph</label>
+    <input id="q" name="q" type="search" placeholder="Search genes, traits, terms, or paste a CURIE" spellcheck="false">
+    <button type="submit">Search</button>
+  </form>
+  <div id="release-info" class="release-info small" aria-label="Current release"></div>
+</header>
+<main id="main" tabindex="-1"><p class="loading">Loading…</p></main>
+<div id="status" class="sr-only" role="status" aria-live="polite"></div>
+<noscript><p>This browser UI needs JavaScript. The JSON API is at <a href="../v1/schema">../v1/</a>.</p></noscript>
+</body>
+</html>

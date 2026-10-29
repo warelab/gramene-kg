@@ -1,6 +1,6 @@
 {
- "recorded_at": "2026-10-29T19:38:59.745Z",
- "build_id": "202610291519",
+ "recorded_at": "2026-10-29T21:19:28.503Z",
+ "build_id": "202610291704",
  "tolerance": 0.1,
  "nodes": {
   "AnalysisRun": 4,
@@ -20,7 +20,7 @@
   "InterProEntry": 55663,
   "KgCollection": 25,
   "KgDataset": 166,
-  "KgDistribution": 156,
+  "KgDistribution": 157,
   "KgRelease": 1,
   "OntologyClassStub": 407,
   "PlantAnatomyTerm": 1455,
@@ -31,7 +31,8 @@
   "SoftwareAgent": 5,
   "TraitTerm": 1697,
   "TranscriptionFactorFamily": 92,
-  "VariationStudy": 12
+  "VariationStudy": 12,
+  "SequenceVariant": 4346834
  },
  "edges": {
   "assay_experiment": 6604,
@@ -61,7 +62,12 @@
   "sample_population": 8347,
   "taxon_parent": 94,
   "to_parent": 1886,
-  "accession_population": 8311
+  "accession_population": 8311,
+  "expression_detected": 3392085,
+  "organ_expression": 1975055,
+  "sample_lof": 3120315,
+  "variant_gene": 4520517,
+  "variant_genome": 4346834
  },
  "not_gated": [
   "KgCollection",

@@ -7,7 +7,7 @@ cd "$(dirname "$0")/.."
 . ./lib.sh
 require_build_id
 stage_begin kg80_promote
-for s in kg05_catalogue kg10_extract kg20_transform kg25_publications kg30_validate kg40_cards_degree kg60_load_mongo kg70_solr; do
+for s in kg05_catalogue kg10_extract kg15_derived kg20_transform kg25_publications kg30_validate kg40_cards_degree kg50_export kg60_load_mongo kg70_solr; do
   is_done "$s" || die "cannot promote: ${s} is not stamped for build ${BUILD_ID}"
 done
 run "${NODE_BIN}" lib/promote.mjs

@@ -12,7 +12,8 @@ inputs:
   rsid_table: /scratch/olson/rsid_projection/work_conseq/sorghum_bicolor.tsv
   rsid_ok: /scratch/olson/rsid_projection/work_conseq/sorghum_bicolor.ok
   rsid_vcf: /scratch/olson/rsid_projection/vcf/sorghum_bicolor.vcf.gz
-  vep_table: /usr/local/gramene/subsites/sorghum/v10/gramene-solr/vep/vep_attributes.txt
+  vep_long: /usr/local/gramene/subsites/sorghum/v11/gramene-solr/vep/sorghum_vep.txt   # gene, sorghum_bicolor__<pop>, EMS|NAT, consequence, het|homo, samples (pop 9 removed)
+  vep_table: /usr/local/gramene/subsites/sorghum/v10/gramene-solr/vep/vep_attributes.txt   # wide Solr form of the same calls (lineage only)
   vep_lineage: /usr/local/gramene/subsites/sorghum/v9/gramene-solr/vep/sorghum_vep.txt2
   atlas_dir: /usr/local/gramene/subsites/sorghum/v11/gramene-mongodb/atlas/tmp
   homology_dir: /usr/local/gramene/subsites/sorghum/v11/gramene-mongodb/search/tmp_homologs

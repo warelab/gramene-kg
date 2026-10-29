@@ -1,7 +1,7 @@
 // kg40 cards + degree: one final node table (parquet/final/nodes.parquet) with
 //   deg   JSON {"<predicate>|out": n, "<predicate>|in": n}  (all edges, slots included)
 //   card  deterministic text for Solr-indexed nodes; every fact ends with its sources and release
-//   solr  true for non-gene nodes and anchor-genome genes
+//   solr  true for non-gene nodes and anchor-genome genes (variants are exact-id lookups, not indexed)
 // and the materialised edge table for Mongo (parquet/final/edges_mongo.parquet) with endpoint classes.
 import { env, buildOut, q, exec, sqlStr, log } from './kgio.mjs';
 
@@ -11,7 +11,7 @@ const FINAL = (n) => sqlStr(buildOut('parquet', 'final', `${n}.parquet`));
 
 await exec(`CREATE TABLE nodes AS SELECT * FROM read_parquet(${G('nodes')}, union_by_name=true)`);
 await exec(`CREATE TABLE edges AS SELECT id, subject, predicate, object, primary_knowledge_source, original_evidence, slot FROM read_parquet(${G('edges')}, union_by_name=true)`);
-await exec(`CREATE TABLE card_set AS SELECT id FROM nodes WHERE cls <> 'GeneModel' OR coalesce(json_extract(attrs, '$.anchor')::BOOLEAN, false)`);
+await exec(`CREATE TABLE card_set AS SELECT id FROM nodes WHERE (cls <> 'GeneModel' OR coalesce(json_extract(attrs, '$.anchor')::BOOLEAN, false)) AND cls <> 'SequenceVariant'`);
 log(`nodes ${(await q('SELECT count(*)::BIGINT n FROM nodes'))[0].n}, card set ${(await q('SELECT count(*)::BIGINT n FROM card_set'))[0].n}`);
 
 // degree for every node

@@ -6,12 +6,16 @@
 // Read-only: the only Mongo dbs touched are kg_meta and kg_<release>_b<build>.
 import Fastify from 'fastify';
 import { MongoClient } from 'mongodb';
+import fs from 'node:fs';
+import path from 'node:path';
+import * as derived from './derived.mjs';
 
 const PORT = Number(process.env.KG_PORT || 12000);
 const HOST = process.env.KG_HOST || '0.0.0.0';
 const MONGO_URL = process.env.MONGO_URL || 'mongodb://127.0.0.1:27017';
 const SOLR_URL = process.env.SOLR_URL || 'http://127.0.0.1:8983/solr';
 const DEFAULT_SITE = process.env.KG_SITE || 'sorghumbase';
+const BUILDS_DIR = process.env.KG_BUILDS_DIR || '/scratch/olson/gramene-kg/builds';
 const MAX_LIMIT = 500, MAX_TIME_MS = 20000, MAX_RESOLVE = 5000, PATH_CAP = 20000;
 
 const mongo = await MongoClient.connect(MONGO_URL, { maxPoolSize: 20 });
@@ -66,7 +70,8 @@ async function resolveNode(ctx, curie, query = {}, projection) {
   if (!n && query.resolve !== '0') {
     const hits = await nodes.find({ aliases_lc: id.toLowerCase() }, { projection: { _id: 1, cls: 1, genome: 1 }, limit: 20 }).toArray();
     if (hits.length === 1) { n = await nodes.findOne({ _id: hits[0]._id }, { projection }); warnings.push(`'${curie}' resolved by alias to ${n._id}`); }
-    else if (hits.length > 1) throw httpError(409, `'${curie}' is ambiguous`, hits.map(h => `${h._id} (${h.cls}, ${h.genome ?? '-'})`).join('; '));
+    else if (hits.length > 1) { const e = httpError(409, `'${curie}' is ambiguous`, hits.map(h => `${h._id} (${h.cls}, ${h.genome ?? '-'})`).join('; '));
+      e.candidates = hits.map(h => ({ id: h._id, class: h.cls, genome: h.genome ?? null })); throw e; }
   }
   if (!n) throw httpError(404, `no node '${curie}' in ${ctx.rel._id}`, 'try /kg/v1/resolve?ids=...');
   return { n, warnings };
@@ -101,8 +106,15 @@ const SLOT = {
   genome: { p: 'biolink:located_in', src: 'infores:ensembl-gene', kl: 'knowledge_assertion', at: 'automated_agent', ev: [], rec: 'genes.location.map', ocls: 'GenomeAssembly' },
   tree: { p: 'biolink:member_of', src: 'infores:ensembl-compara', kl: 'prediction', at: 'computational_model', ev: ['ECO:0000080'], rec: 'genes.homology.gene_tree.id', ocls: 'GeneTree' },
 };
-const slotEdge = (ctx, gene, kind, target, loc) => ({ _id: `slot:${kind}:${gene}`, slot: true, s: gene, o: target, p: SLOT[kind].p, src: SLOT[kind].src,
-  kl: SLOT[kind].kl, at: SLOT[kind].at, ev: SLOT[kind].ev, q: kind === 'genome' ? loc : undefined, rec: `${ctx.rel._id}.${SLOT[kind].rec}`, layer: 'etl' });
+// rsID variants carry the same genome slot; their location comes from the EVA VCF
+const VARIANT_GENOME = { src: 'infores:eva', rec: 'sorghum_bicolor.vcf.gz' };   // = transform variant_genome source_record
+const slotEdge = (ctx, gene, kind, target, loc) => {
+  const v = kind === 'genome' && gene.startsWith('dbsnp:');
+  return { _id: `slot:${kind}:${gene}`, slot: true, s: gene, o: target, p: SLOT[kind].p, src: v ? VARIANT_GENOME.src : SLOT[kind].src,
+    kl: SLOT[kind].kl, at: SLOT[kind].at, ev: SLOT[kind].ev, q: kind === 'genome' ? loc : undefined,
+    rec: v ? VARIANT_GENOME.rec : `${ctx.rel._id}.${SLOT[kind].rec}`, layer: 'etl' };
+};
+const HAS_SLOTS = new Set(['GeneModel', 'SequenceVariant']);
 
 const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
 const unb64 = (s) => { try { return JSON.parse(Buffer.from(s, 'base64url').toString('utf8')); } catch { return null; } };
@@ -117,7 +129,7 @@ const intParam = (v, dflt, max, name) => {
 app.setErrorHandler((err, req, reply) => {
   const code = err.statusCode && err.statusCode < 600 ? err.statusCode : 500;
   if (code >= 500) req.log.error(err);
-  reply.code(code).send({ error: err.message, hint: err.hint ?? null, docs: '/kg/v1/schema' });
+  reply.code(code).send({ error: err.message, hint: err.hint ?? null, ...(err.candidates ? { candidates: err.candidates } : {}), docs: '/kg/v1/schema' });
 });
 
 app.get('/kg/v1/health', async () => {
@@ -198,7 +210,7 @@ app.get('/kg/v1/node/:curie/edges', async (req, reply) => {
       return rows.map(e => ({ e, d: ph }));
     }
     if (ph === 'slot_out') {
-      if (dir === 'in' || n.cls !== 'GeneModel') return [];
+      if (dir === 'in' || !HAS_SLOTS.has(n.cls)) return [];
       const rows = [];
       if (n.genome) rows.push(slotEdge(ctx, id, 'genome', n.genome, n.loc));
       if (n.tree) rows.push(slotEdge(ctx, id, 'tree', n.tree));
@@ -233,6 +245,8 @@ app.get('/kg/v1/node/:curie/edges', async (req, reply) => {
   const others = [...new Set(out.map(({ e, d }) => d === 'out' ? e.o : e.s))];
   const on = new Map((await N.find({ _id: { $in: others } }, { projection: { cls: 1, cat: 1, name: 1 } }).toArray()).map(o => [o._id, o]));
   const data = out.map(({ e, d }) => ({ ...edgeOut(e, ctx, nodeOut(on.get(d === 'out' ? e.o : e.s), { full: false }) ?? { id: d === 'out' ? e.o : e.s }), direction: d }));
+  if (slotInKind === 'genome' && dir !== 'out' && (await N.findOne({ genome: id, cls: 'SequenceVariant' }, { projection: { _id: 1 } })))
+    warnings.push('sequence variants located in this genome are not listed here (millions); query them by position with /kg/v1/region?category=SequenceVariant');
   return send(reply, ctx, data, { degree: deg, next, warnings });
 });
 
@@ -300,6 +314,8 @@ app.get('/kg/v1/search', async (req, reply) => {
   const genome = normGenome(req.query.genome);
   if (genome) fq.push(`genome_s:${solrPhrase(genome)}`);
   if (req.query.source) fq.push(`source_ss:${solrPhrase(req.query.source)}`);
+  if (req.query.taxon) fq.push(`taxon_s:${solrPhrase(req.query.taxon)}`);
+  if (req.query.system_name) fq.push(`system_name_s:${solrPhrase(req.query.system_name)}`);
   const p = new URLSearchParams({ q: q.toLowerCase() || '*:*', defType: 'edismax',
     qf: 'id_lc_s^30 local_id_lc_s^25 aliases_lc_ss^12 name_t^6 synonyms_t^3 description_t card_t', pf: 'name_t^4', mm: '2<-1 5<80%',
     rows, start, wt: 'json', timeAllowed: 10000, fl: 'id,name_s,category_leaf_s,category_ss,genome_s,taxon_s,source_ss,degree_i,gene_fq_s,card_t,score',
@@ -355,7 +371,7 @@ app.get('/kg/v1/path', async (req, reply) => {
       if (rows.length >= PATH_CAP) warnings.push(`neighbourhood of ${n._id} truncated at ${PATH_CAP} edges per direction`);
       res.push(...rows.map(e => ({ e, other: e[k] })));
     }
-    if (n.cls === 'GeneModel') { if (n.genome) res.push({ e: slotEdge(ctx, n._id, 'genome', n.genome, n.loc), other: n.genome });
+    if (HAS_SLOTS.has(n.cls)) { if (n.genome) res.push({ e: slotEdge(ctx, n._id, 'genome', n.genome, n.loc), other: n.genome });
       if (n.tree) res.push({ e: slotEdge(ctx, n._id, 'tree', n.tree), other: n.tree }); }
     const kind = n.cls === 'GeneTree' ? 'tree' : n.cls === 'GenomeAssembly' ? 'genome' : null;
     if (kind) {
@@ -378,7 +394,7 @@ app.get('/kg/v1/path', async (req, reply) => {
       second.push(...await E.find({ $or: [{ s: { $in: chunk }, o: big._id }, { o: { $in: chunk }, s: big._id }], neg: { $ne: true } }, { limit: 1000, maxTimeMS: MAX_TIME_MS }).toArray());
     }
     const midSet = new Set(mids);
-    if (big.cls === 'GeneModel') for (const [kind, t] of [['genome', big.genome], ['tree', big.tree]]) if (t && midSet.has(t)) second.push(slotEdge(ctx, big._id, kind, t, big.loc));
+    if (HAS_SLOTS.has(big.cls)) for (const [kind, t] of [['genome', big.genome], ['tree', big.tree]]) if (t && midSet.has(t)) second.push(slotEdge(ctx, big._id, kind, t, big.loc));
     for (const kind of ['tree', 'genome']) if ((big.cls === 'GeneTree' && kind === 'tree') || (big.cls === 'GenomeAssembly' && kind === 'genome')) {
       const gs = await N.find({ _id: { $in: mids.filter(m => m.startsWith('gramene.gene:')) }, [kind]: big._id }, { projection: { _id: 1, loc: 1 } }).toArray();
       second.push(...gs.map(g => slotEdge(ctx, g._id, kind, big._id, g.loc)));
@@ -391,6 +407,34 @@ app.get('/kg/v1/path', async (req, reply) => {
   }
   const ordered = paths.slice(0, 50).map(p => (small._id === from._id ? p : [...p].reverse()).map(e => edgeOut(e, ctx)));
   return send(reply, ctx, ordered, { warnings: [...new Set(warnings)] });
+});
+
+// ---- derived layers: per-gene homology pairs and expression values from the build's bucketed parquet ----
+async function derivedRoute(req, reply, fn, opts) {
+  const ctx = await resolveRelease(req);
+  // the parameter is always a gene: a bare stable id is tried as gramene.gene:<id> first, then the usual alias resolution
+  const raw = req.params.gene;
+  const bare = !raw.includes(':') && await ctx.db.collection('nodes').findOne({ _id: `gramene.gene:${raw}` }, { projection: { cls: 1 } });
+  const { n, warnings } = bare ? { n: bare, warnings: [] } : await resolveNode(ctx, raw, req.query, { cls: 1 });
+  if (n.cls !== 'GeneModel') throw httpError(400, `${n._id} is a ${n.cls}, not a gene`);
+  const dir = path.join(BUILDS_DIR, ctx.rel._id, ctx.rel.current_build);
+  const data = await fn(dir, n._id.replace(/^gramene\.gene:/, ''), opts);
+  return send(reply, ctx, data, { warnings, source: `${ctx.rel._id} build ${ctx.rel.current_build} parquet/derived (not graph edges)` });
+}
+app.get('/kg/v1/derived/homologs/:gene', (req, reply) => derivedRoute(req, reply, derived.homologs,
+  { kind: req.query.kind, limit: intParam(req.query.limit, 100, 1000, 'limit'), offset: intParam(req.query.offset, 0, 1e7, 'offset') }));
+app.get('/kg/v1/derived/expression/:gene', (req, reply) => derivedRoute(req, reply, derived.expression, { experiment: req.query.experiment }));
+
+// ---- browse UI: static files from apps/ui at /kg/ui/ (hash routing, so every other path is index.html) ----
+const UI_DIR = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../ui');
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.md': 'text/markdown; charset=utf-8' };
+app.get('/kg/ui', (req, reply) => reply.redirect('/kg/ui/'));
+app.get('/kg/ui/*', (req, reply) => {
+  const rel = path.normalize(req.params['*'] || 'index.html').replace(/^(\.\.[/\\])+/, '');
+  let f = path.join(UI_DIR, rel);
+  if (!f.startsWith(UI_DIR + path.sep) || !fs.existsSync(f) || !fs.statSync(f).isFile()) f = path.join(UI_DIR, 'index.html');
+  reply.header('Cache-Control', 'no-cache').type(MIME[path.extname(f)] ?? 'application/octet-stream');
+  return reply.send(fs.createReadStream(f));
 });
 
 app.addHook('onClose', async () => mongo.close());

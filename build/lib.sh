@@ -12,8 +12,8 @@ run()  { log "+ $*"; "$@"; }
 
 # Stage order; a stage that starts clears the stamps of every stage after it, so a re-run upstream
 # can never leave downstream stamps describing older artifacts.
-KG_STAGE_ORDER=(kg00_preflight kg05_catalogue kg10_extract kg20_transform kg25_publications kg30_validate
-                kg40_cards_degree kg60_load_mongo kg70_solr kg80_promote)
+KG_STAGE_ORDER=(kg00_preflight kg05_catalogue kg10_extract kg15_derived kg20_transform kg25_publications kg30_validate
+                kg40_cards_degree kg50_export kg60_load_mongo kg70_solr kg80_promote)
 # A stamp records the build it belongs to: "<BUILD_ID> <timestamp>".
 stamp_done()  { mkdir -p "${STATE_DIR}"; echo "${BUILD_ID} $(date '+%Y-%m-%dT%H:%M:%S')" > "${STATE_DIR}/$1.done"; }
 stamp_clear() { rm -f "${STATE_DIR}/$1.done"; }

@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import zlib from 'node:zlib';
+import { spawn } from 'node:child_process';
 import { MongoClient } from 'mongodb';
 import { env, loadReleaseConfig, buildOut, NdjsonWriter, pool, sha1Text, log } from './kgio.mjs';
 
@@ -178,9 +179,52 @@ if (want('collections')) {
   counts.collections = await wc.close(); counts.collection_members = await wm.close();
   log(`collections ${counts.collections}, members ${counts.collection_members}`);
 }
+// ---- expression organ calls (anchor genes; level per organ from the expression_attributes pipeline) ----
+if (!NO_VARIANTS && want('organ_expression')) {
+  const w = new NdjsonWriter(X('organ_expression')); const wg = new NdjsonWriter(X('gene_expression_profile'));
+  for await (const d of src.collection('expression_attributes').find({}, { projection: { per_organ: 1, breadth: 1, tau: 1, max_tpm: 1, peak_organs: 1, n_organs_detected: 1, n_organs_with_data: 1 }, batchSize: 5000 })) {
+    for (const [organ, c] of Object.entries(d.per_organ ?? {})) {
+      if (!c || c.level === 'no_data') continue;
+      const p = w.write({ gene: d._id, organ, level: c.level, tpm: c.tpm ?? null, n_samples: c.n_samples ?? null }); if (p) await p;
+    }
+    const p = wg.write({ gene: d._id, breadth: d.breadth ?? null, tau: d.tau ?? null, max_tpm: d.max_tpm ?? null, peak_organs: d.peak_organs ?? [],
+      n_organs_detected: d.n_organs_detected ?? null, n_organs_with_data: d.n_organs_with_data ?? null }); if (p) await p;
+  }
+  counts.organ_expression = await w.close(); counts.gene_expression_profile = await wg.close();
+  log(`organ expression calls ${counts.organ_expression} (no_data dropped), gene profiles ${counts.gene_expression_profile}`);
+}
 await client.close();
 
 // ---- files -----------------------------------------------------------------------------------
+// ---- gene -> experiment (expression detected) from the genes core: same rule the site uses
+// (mongo2solr.join.js: any baseline group >= 0.5, or any contrast with p < 0.05 and |log2fc| >= 1)
+if (!NO_VARIANTS && want('expression_detected')) {
+  const w = new NdjsonWriter(X('expression_detected')); const solr = env('SOLR_URL'); let cursor = '*';
+  for (;;) {
+    const u = `${solr}/${cfg.genes_core}/select?q=*:*&fq=expressed_in_gxa_attr_ss:*&fl=id,expressed_in_gxa_attr_ss&sort=id%20asc&rows=10000&wt=json&cursorMark=${encodeURIComponent(cursor)}`;
+    const r = await fetch(u); if (!r.ok) throw new Error(`solr ${r.status} reading expressed_in_gxa_attr_ss`);
+    const j = await r.json();
+    for (const d of j.response.docs) for (const e of d.expressed_in_gxa_attr_ss ?? []) { const p = w.write({ gene: d.id, experiment: e }); if (p) await p; }
+    if (j.nextCursorMark === cursor) break; cursor = j.nextCursorMark;
+  }
+  counts.expression_detected = await w.close(); log(`expression detected pairs ${counts.expression_detected}`);
+}
+// ---- rsIDs: VCF records for the rsIDs windowed onto anchor genes (one line per biallelic split) ----
+if (!NO_VARIANTS && want('variants')) {
+  const ids = new Set();
+  const rl = readline.createInterface({ input: fs.createReadStream(I.rsid_table), crlfDelay: Infinity });
+  for await (const line of rl) { const c = line.split('\t'); for (const r of (c[2] ?? '').split(',')) if (r) ids.add(r); }
+  const idFile = buildOut('work', 'rsids.txt'); fs.writeFileSync(idFile, [...ids].join('\n') + '\n');
+  log(`rsIDs in ${path.basename(I.rsid_table)}: ${ids.size}`);
+  const out = fs.createWriteStream(X('rsid_vcf').replace(/\.ndjson$/, '.tsv'));
+  const bc = spawn(process.env.BCFTOOLS || 'bcftools', ['query', '-i', `ID=@${idFile}`, '-f', '%ID\t%CHROM\t%POS\t%REF\t%ALT\t%INFO/VC\t%INFO/SID\n', I.rsid_vcf]);
+  bc.stdout.pipe(out); let err = ''; bc.stderr.on('data', (b) => { err += b; });
+  const code = await new Promise((res) => bc.on('close', res)); await new Promise((res) => out.end(res));
+  if (code !== 0) throw new Error(`bcftools exited ${code}: ${err.slice(0, 400)}`);
+  counts.rsid_vcf_lines = Number((await new Promise((res) => { let n = 0; fs.createReadStream(X('rsid_vcf').replace(/\.ndjson$/, '.tsv')).on('data', (b) => { for (const x of b) if (x === 10) n++; }).on('end', () => res(n)); })));
+  counts.rsid_ids = ids.size; log(`rsid VCF lines ${counts.rsid_vcf_lines}`);
+}
+
 if (want('idf')) {
   const w = new NdjsonWriter(X('idf'));
   for (const f of fs.readdirSync(I.atlas_dir).filter(f => f.endsWith('.idf.txt')).sort()) {

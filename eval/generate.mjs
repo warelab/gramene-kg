@@ -48,5 +48,29 @@ for (const r of await rows(`SELECT object AS expt, list(subject ORDER BY subject
   add('experiment_pubs', `Which publication describes expression experiment ${r.expt.split(':')[1]}?`,
     [`GET /kg/v1/node/${r.expt}/edges?predicate=mentions&direction=in`], { publications: r.pubs }, ['infores:expression-atlas']);
 
+// ---- M1b layers (skipped when the build has no variant / LoF / expression families) ----
+const fams = new Set((await rows(`SELECT DISTINCT family FROM ${E}`)).map(r => r.family));
+// 7. protein-truncating variants -> genes
+if (fams.has('variant_gene')) for (const r of await rows(`SELECT subject AS v, list(object ORDER BY object) AS genes FROM ${E}
+    WHERE family='variant_gene' AND json_extract(qualifiers,'$.protein_truncating')::BOOLEAN GROUP BY subject ORDER BY hash(subject) LIMIT 5`))
+  add('variant_genes', `Which gene(s) is ${r.v.split(':')[1]} a predicted protein-truncating variant of?`,
+    [`GET /kg/v1/node/${r.v}/edges?predicate=is_sequence_variant_of&direction=out`], { ids: r.genes }, ['infores:eva']);
+// 8. predicted LoF carriers of a gene (all populations except the excluded SGT panel)
+if (fams.has('sample_lof')) for (const r of await rows(`SELECT object AS gene, list(subject ORDER BY subject) AS samples FROM ${E} WHERE family='sample_lof'
+    GROUP BY object HAVING count(*) BETWEEN 2 AND 12 ORDER BY hash(object) LIMIT 5`))
+  add('lof_carriers', `Which genotyped samples carry a predicted loss-of-function allele of ${r.gene.split(':')[1]}?`,
+    [`GET /kg/v1/node/${r.gene}/edges?predicate=gramene:carries_predicted_lof_allele_of&direction=in`], { ids: r.samples }, ['infores:ensembl-variation']);
+// 9. organs where a sorghum gene is expressed (negated not_expressed calls excluded)
+if (fams.has('organ_expression')) for (const r of await rows(`SELECT subject AS gene, list(object ORDER BY object) AS organs FROM ${E} WHERE family='organ_expression'
+    AND NOT negated AND starts_with(subject,'gramene.gene:SORBI_') GROUP BY subject ORDER BY hash(subject) LIMIT 5`))
+  add('organ_expression', `In which plant organs is ${r.gene.split(':')[1]} expressed?`,
+    [`GET /kg/v1/node/${r.gene}/edges?predicate=expressed_in&direction=out&source=infores:sorghumbase`], { ids: r.organs }, ['infores:sorghumbase']);
+// 10. homolog counts by kind from the derived layer
+if (fams.has('variant_gene')) for (const r of await rows(`SELECT gene_id, map_from_entries(list(struct_pack(k := kind, v := n) ORDER BY kind)) AS by_kind FROM (
+    SELECT gene_id, kind, count(*)::INTEGER n FROM read_parquet('${B}/parquet/derived/homology/*/*.parquet') WHERE gene_id IN (
+      SELECT gene_id FROM read_parquet('${B}/parquet/derived/homology/*/*.parquet') WHERE starts_with(gene_id, 'SORBI_') GROUP BY gene_id ORDER BY hash(gene_id) LIMIT 5)
+    GROUP BY ALL) GROUP BY gene_id ORDER BY gene_id`))
+  add('derived_homologs', `How many homologs of each kind does ${r.gene_id} have?`, [`GET /kg/v1/derived/homologs/gramene.gene:${r.gene_id}?limit=1`], { by_kind: Array.isArray(r.by_kind) ? Object.fromEntries(r.by_kind.map(x => [x.key, x.value])) : r.by_kind });
+
 for (const q of out) console.log(JSON.stringify(q));
 console.error(`${out.length} questions from ${B}`);

@@ -494,6 +494,77 @@ await writeEdges('collection_member', edgeSql('collection_member', `(SELECT DIST
   subject: `'gramene.collection:' || collection`, object: `'gramene.gene:' || gene`, predicate: `'biolink:has_member'`,
   pks: 'infores:sorghumbase', kl: 'knowledge_assertion', at: 'manual_agent', rec: `${cfg.genes_core}.saved_search` }));
 
+// ---------------------------------------------------------------------------------------------
+// M1b layers: rsID variants on the anchor genome, predicted LoF calls, organ expression
+// ---------------------------------------------------------------------------------------------
+if (!NO_VARIANTS) {
+  const AN = (pfx) => analyses.find(a => a.id.startsWith(`gramene.analysis:${pfx}@`))?.id ?? null;
+  const I = cfg.inputs;
+
+  // variants: one node per rsID (biallelic split lines aggregated), located on the anchor assembly
+  await exec(`CREATE TABLE rsid_gene AS SELECT gene, rsid, list_contains(ptv, rsid) AS ptv, list_contains(pav, rsid) AS pav FROM (
+      SELECT column0 AS gene, unnest(string_split(column2, ',')) AS rsid, string_split(coalesce(column3, ''), ',') AS ptv, string_split(coalesce(column4, ''), ',') AS pav
+      FROM read_csv(${sqlStr(I.rsid_table)}, delim='\t', header=false, all_varchar=true, quote='', escape='')) WHERE rsid <> ''`);
+  // an rsID can span several biallelic records with different REFs (e.g. TCAAAA>T and TCAAA>T): keep REF/ALT pairs
+  await exec(`CREATE TABLE rsid_vcf AS SELECT column0 AS rsid, min(column1) AS chrom, min(column2::BIGINT) AS pos, max(length(column3)) AS ref_len,
+      list(DISTINCT struct_pack(ref := column3, alt := column4) ORDER BY struct_pack(ref := column3, alt := column4)) AS alleles,
+      list(DISTINCT column5 ORDER BY column5) AS so_classes,
+      list_sort(list_distinct(flatten(list(string_split(coalesce(column6, ''), ','))))) AS studies
+    FROM read_csv(${sqlStr(buildOut('extract', 'rsid_vcf.tsv'))}, delim='\t', header=false, all_varchar=true, quote='', escape='') GROUP BY column0`);
+  counts.dropped.rsid_not_in_vcf = Number((await q(`SELECT count(DISTINCT rsid)::BIGINT n FROM rsid_gene WHERE rsid NOT IN (SELECT rsid FROM rsid_vcf)`))[0].n);
+  await exec(`UPDATE rsid_vcf SET studies = list_filter(studies, lambda x: x <> '')`);
+  await writeNodes('SequenceVariant', nodeSql('SequenceVariant', ['biolink:SequenceVariant'], 'rsid_vcf', {
+    id: `'dbsnp:' || rsid`, name: 'rsid', in_taxon: `'NCBITaxon:4558'`, genome: L(cfg.anchor_genome_ref),
+    region: 'chrom', start: 'pos', end: 'pos + ref_len - 1',
+    attrs: `to_json({so_class: CASE WHEN len(so_classes) = 1 THEN so_classes[1] ELSE NULL END, so_classes: so_classes, alleles: alleles, studies: studies,
+      assembly: ${L(cfg.anchor_genome_ref)}})` }));
+  await writeEdges('variant_gene', edgeSql('variant_gene', `rsid_gene r JOIN rsid_vcf v USING (rsid)`, {
+    subject: `'dbsnp:' || r.rsid`, object: `'gramene.gene:' || r.gene`, predicate: `'biolink:is_sequence_variant_of'`,
+    pks: F.variant_gene.primary_knowledge_source, kl: F.variant_gene.knowledge_level, at: F.variant_gene.agent_type, ev: F.variant_gene.has_evidence,
+    studies: `list_transform(list_filter(v.studies, lambda x: starts_with(x, 'PRJ')), lambda x: 'bioproject:' || x)`,
+    method: AN('rsid-windowing'), rec: path.basename(I.rsid_table) + ' (rsid_projection work_conseq, column 3)',
+    qualifiers: `to_json({protein_truncating: r.ptv, protein_altering: r.pav})` }));
+  await writeEdges('variant_genome', edgeSql('variant_genome', 'rsid_vcf', { subject: `'dbsnp:' || rsid`, object: L(cfg.anchor_genome_ref),
+    predicate: `'biolink:located_in'`, pks: F.variant_gene.primary_knowledge_source, kl: S.knowledge_level, at: S.agent_type,
+    rec: path.basename(I.rsid_vcf), qualifiers: `to_json({region: chrom, start: pos, "end": pos + ref_len - 1})`, slot: true }));
+
+  // predicted loss of function: sample -> gene, one edge per pair with every (consequence, zygosity, population) call
+  await exec(`CREATE TABLE lof_calls AS SELECT column0 AS gene, regexp_extract(column1, '__([0-9]+)$', 1) AS pop, column2 AS pop_type, column3 AS consequence,
+      CASE column4 WHEN 'het' THEN 'heterozygous' ELSE 'homozygous' END AS zygosity, unnest(string_split(column5, ',')) AS sample
+    FROM read_csv(${sqlStr(I.vep_long)}, delim='\t', header=false, all_varchar=true, quote='', escape='')`);
+  counts.dropped.lof_population_9_calls = Number((await q(`SELECT count(*)::BIGINT n FROM lof_calls WHERE pop = '9'`))[0].n);
+  await exec(`DELETE FROM lof_calls WHERE pop = '9' OR sample = ''`);
+  await writeEdges('sample_lof', edgeSql('sample_lof', `(SELECT sample, gene, list(struct_pack(consequence := consequence, zygosity := zygosity,
+        population := 'gramene.population:sorghum_bicolor.' || pop) ORDER BY consequence, zygosity, pop) AS calls,
+        list(DISTINCT 'gramene.population:sorghum_bicolor.' || pop ORDER BY 'gramene.population:sorghum_bicolor.' || pop) AS pops
+      FROM lof_calls GROUP BY sample, gene)`, {
+    subject: `'gramene.sample:' || sample`, object: `'gramene.gene:' || gene`, predicate: `'gramene:carries_predicted_lof_allele_of'`,
+    pks: F.sample_lof.primary_knowledge_source, kl: F.sample_lof.knowledge_level, at: F.sample_lof.agent_type, ev: F.sample_lof.has_evidence,
+    studies: 'pops', method: AN('vep-lof-table'), rec: path.basename(I.vep_long), osubj: 'sample',
+    qualifiers: `to_json({calls: calls})` }));
+
+  // organ expression calls -> expressed_in (anatomy terms); not_expressed is negated; no_data was dropped in kg10
+  const organMap = Object.entries(JSON.parse(fs.readFileSync(CFG('po_organ_map.json'), 'utf8'))).filter(([k]) => !k.startsWith('_'));
+  await exec(`CREATE TABLE organ_po AS SELECT * FROM (VALUES ${organMap.map(([k, v]) => `(${sqlStr(k)}, ${sqlStr(v)})`).join(', ')}) t(organ, po)`);
+  await exec(`CREATE TABLE organ_expr AS SELECT x.*, o.po FROM ${rj('organ_expression')} x LEFT JOIN organ_po o USING (organ)`);
+  counts.dropped.organ_expression_unmapped_organ = Number((await q(`SELECT count(*)::BIGINT n FROM organ_expr WHERE po IS NULL`))[0].n);
+  const OE = F.organ_expression;
+  await writeEdges('organ_expression', edgeSql('organ_expression', `organ_expr WHERE po IS NOT NULL`, {
+    subject: `'gramene.gene:' || gene`, object: 'po', predicate: `'biolink:expressed_in'`,
+    pks: OE.primary_knowledge_source, kl: OE.knowledge_level, at: OE.agent_type, ev: OE.has_evidence, method: AN('expression_attributes'),
+    rec: `${RELEASE}.expression_attributes.per_organ`, negated: `level = 'not_expressed'`,
+    qualifiers: `to_json({organ: organ, expression_level: level, median_tpm: tpm, n_sample_groups: n_samples})` }));
+
+  // gene -> experiment where expression was detected
+  const ED = F.expression_detected;
+  await writeEdges('expression_detected', edgeSql('expression_detected', `(SELECT DISTINCT gene, experiment FROM ${rj('expression_detected')})`, {
+    subject: `'gramene.gene:' || gene`, object: exptId('experiment'), predicate: `'gramene:expression_detected_in'`,
+    pks: `sql:CASE WHEN starts_with(experiment, 'JGI') THEN ${sqlStr(ED.JGI.primary_knowledge_source)} ELSE ${sqlStr(ED.EBI.primary_knowledge_source)} END`,
+    kl: ED.EBI.knowledge_level, at: ED.EBI.agent_type, ev: ED.EBI.has_evidence, studies: `[${exptId('experiment')}]`,
+    method: 'any baseline assay group >= 0.5, or any contrast with p < 0.05 and |log2FC| >= 1 (gramene-solr genes/mongo2solr.join.js)',
+    rec: `${cfg.genes_core}.expressed_in_gxa_attr_ss` }));
+}
+
 // curated layer (M3): published assertions become one more source here
 counts.curated = { note: 'kg_curation not read before M3' };
 
