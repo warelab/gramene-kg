@@ -113,4 +113,4 @@ export function releaseMongoConfig(releaseRoot) {
 
 export async function exists(p) { try { await fsp.access(p); return true; } catch { return false; } }
 
-export function log(...a) { console.error(`[${new Date().toISOString().slice(0, 19).replace('T', ' ')}]`, ...a); }
+export function log(...a) { const d = new Date(); const p = (n) => String(n).padStart(2, '0'); console.error(`[${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}]`, ...a); }

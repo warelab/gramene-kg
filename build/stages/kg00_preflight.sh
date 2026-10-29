@@ -27,7 +27,9 @@ for c in $(yget required_ontology_loads | tr -d '[]",'); do
 done
 
 # --- input files -------------------------------------------------------------------------------
-for k in rsid_table rsid_ok rsid_vcf vep_table vep_lineage grassius_tsv saved_search_backup grin_export vep_study_info; do
+# .ok markers are empty by design: test existence, not size
+gate "input rsid_ok: $(yget inputs.rsid_ok)" "[ -e \"$(yget inputs.rsid_ok)\" ]"
+for k in rsid_table rsid_vcf vep_table vep_lineage grassius_tsv saved_search_backup grin_export vep_study_info; do
   f="$(yget inputs.$k)"
   gate "input ${k}: ${f}" "[ -s \"${f}\" ]"
 done
