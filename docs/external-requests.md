@@ -17,23 +17,15 @@ The target must keep the `/kg` path: the API serves everything under `/kg/v1`, `
 `AllowEncodedSlashes NoDecode` plus `nocanon` let percent-encoded CURIEs through; DOIs contain `/`
 (`/kg/v1/node/doi:10.1101%2Fgr.227462.117`), and without them Apache answers its own 404.
 
-Status 2026-11-04 (evening): the `/kg` path is fixed. Every `/kg/v1` route, `/kg/graphql` and `/kg/ui/`
-answer 200 through the proxy, and the 60-question REST eval passes 60/60 against
-https://data.sorghumbase.org. One correction is still outstanding:
-- **encoded slashes are refused by Apache** (its own HTML 404 for `/kg/v1/node/doi:10.1101%2Fgr.227462.117`).
-  `AllowEncodedSlashes` is not inherited from the main server config: it has to be inside the
-  data.sorghumbase.org `<VirtualHost *:443>` block, and the ProxyPass line needs `nocanon`. This affects the
-  182 publication nodes whose id is a DOI. `/kg/v1/resolve?ids=doi:...` (query string) works meanwhile.
-- optional: bare `/kg` still 404s (the RedirectMatch line was not added).
-
-Done when all of these return 200 from outside squam:
+**Done 2026-11-04.** The proxy keeps the `/kg` path and passes encoded slashes. Checks, all 200:
 
     curl -sI https://data.sorghumbase.org/kg/v1/releases
     curl -sI 'https://data.sorghumbase.org/kg/v1/node/doi:10.1101%2Fgr.227462.117'
     curl -sI https://data.sorghumbase.org/kg/ui/
 
-Then set `KG_PUBLIC_URL=https://data.sorghumbase.org/kg` on pm2 `gramene-kg-api` so JSON-LD `@context`
-points at the public URL.
+The 60-question REST eval passes 60/60 against https://data.sorghumbase.org, and all 182 publication
+nodes whose id is a DOI return the same node through the proxy as from squam:12000. `KG_PUBLIC_URL` is
+set in ecosystem.config.cjs. Optional and not done: bare `/kg` still 404s (no RedirectMatch).
 
 ## 2. Bioregistry (https://github.com/biopragmatics/bioregistry)
 Gramene owns these prefixes, so updates come from Gramene:
