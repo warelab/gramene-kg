@@ -38,8 +38,11 @@ Start pm2 apps with `env -i` so no shell variables leak into the app environment
 (`pm2 restart --update-env` merges rather than replaces).
 
 The API serves REST (`/kg/v1`), GraphQL (`/kg/graphql`) and the browse UI (`/kg/ui/`); see docs/api.md.
-`KG_PUBLIC_URL` (default `http://127.0.0.1:12000/kg`) is the base written into JSON-LD `@context`;
-set it to `https://data.sorghumbase.org/kg` once the gorgonzola proxy is live.
+`KG_PUBLIC_URL` is the base written into JSON-LD `@context`; ecosystem.config.cjs sets it to
+`https://data.sorghumbase.org/kg` (the public proxy, live since 2026-11-04; default without it:
+`http://127.0.0.1:12000/kg`). After changing env in ecosystem.config.cjs:
+
+    env -i HOME=$HOME USER=$USER PATH=$PATH pm2 startOrRestart ecosystem.config.cjs --only gramene-kg-api --update-env
 
 ## Staging MCP (kg_* tools)
 

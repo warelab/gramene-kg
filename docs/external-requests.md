@@ -6,12 +6,34 @@ Nothing here has been sent. Each item names who acts and what "done" looks like.
 Who: owner of the gorgonzola Apache config and the CSHL firewall.
 Change, inside the data.sorghumbase.org vhost in conf/extra/httpd-ssl.conf:
 
-    ProxyPass        /kg http://squam.cshl.edu:12000/kg
+    AllowEncodedSlashes NoDecode
+    ProxyPass        /kg http://squam.cshl.edu:12000/kg nocanon
     ProxyPassReverse /kg http://squam.cshl.edu:12000/kg
     ProxyTimeout 60
+    RedirectMatch ^/kg/?$ /kg/ui/          # optional: bare /kg opens the browse UI
 
 then `apachectl configtest && apachectl graceful`, and open TCP 12000 on squam to gorgonzola only.
-Done when: `curl -sI https://data.sorghumbase.org/kg/v1/releases` returns 200 (after M1a).
+The target must keep the `/kg` path: the API serves everything under `/kg/v1`, `/kg/graphql` and `/kg/ui`.
+`AllowEncodedSlashes NoDecode` plus `nocanon` let percent-encoded CURIEs through; DOIs contain `/`
+(`/kg/v1/node/doi:10.1101%2Fgr.227462.117`), and without them Apache answers its own 404.
+
+Status 2026-11-04 (evening): the `/kg` path is fixed. Every `/kg/v1` route, `/kg/graphql` and `/kg/ui/`
+answer 200 through the proxy, and the 60-question REST eval passes 60/60 against
+https://data.sorghumbase.org. One correction is still outstanding:
+- **encoded slashes are refused by Apache** (its own HTML 404 for `/kg/v1/node/doi:10.1101%2Fgr.227462.117`).
+  `AllowEncodedSlashes` is not inherited from the main server config: it has to be inside the
+  data.sorghumbase.org `<VirtualHost *:443>` block, and the ProxyPass line needs `nocanon`. This affects the
+  182 publication nodes whose id is a DOI. `/kg/v1/resolve?ids=doi:...` (query string) works meanwhile.
+- optional: bare `/kg` still 404s (the RedirectMatch line was not added).
+
+Done when all of these return 200 from outside squam:
+
+    curl -sI https://data.sorghumbase.org/kg/v1/releases
+    curl -sI 'https://data.sorghumbase.org/kg/v1/node/doi:10.1101%2Fgr.227462.117'
+    curl -sI https://data.sorghumbase.org/kg/ui/
+
+Then set `KG_PUBLIC_URL=https://data.sorghumbase.org/kg` on pm2 `gramene-kg-api` so JSON-LD `@context`
+points at the public URL.
 
 ## 2. Bioregistry (https://github.com/biopragmatics/bioregistry)
 Gramene owns these prefixes, so updates come from Gramene:

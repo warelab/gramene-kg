@@ -11,7 +11,7 @@ module.exports = {
       interpreter: NODE,
       node_args: '--max-old-space-size=2048',
       env: {
-        KG_PORT: '12000', KG_HOST: '0.0.0.0', KG_SITE: 'sorghumbase',
+        KG_PORT: '12000', KG_HOST: '0.0.0.0', KG_SITE: 'sorghumbase', KG_PUBLIC_URL: 'https://data.sorghumbase.org/kg',
         MONGO_URL: 'mongodb://127.0.0.1:27017', SOLR_URL: 'http://127.0.0.1:8983/solr',
         TMPDIR: '/scratch/olson/gramene-kg/tmp', NODE_ENV: 'production',
       },
