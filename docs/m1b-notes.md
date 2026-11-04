@@ -4,6 +4,10 @@ Build `202610291704` of sorghum11, promoted 2026-10-29. It is the first build wi
 expression layers, the derived tables, the KGX export and the browse UI. Its expectations were recorded
 in record mode, then a rerun from kg30 passed in check mode.
 
+It was replaced on 2026-11-04 by build `202611041048`, which carries the review's data fixes (see the
+end of this file). That build was a full `NEW_BUILD=1` run in check mode, about 54 minutes. The figures
+below hold for both builds except where the last section says otherwise.
+
 ## Measured
 
 | | value |
@@ -70,20 +74,21 @@ Plan checks:
 - **Derived tables are bucketed Parquet read by DuckDB in the API** (10–30 ms per lookup). Bucketing
   uses DuckDB's `hash()`, so a DuckDB upgrade requires rerunning kg15 for any build the API serves (see
   docs/derived.md).
-- **The curated-gene feed snapshots on dev.gramene.org still fail to fetch.** The build has 2 fewer
-  Dataset/Distribution records; no stage reads those snapshots.
+- **The curated-gene feed snapshots on dev.gramene.org failed to fetch** in build 202610291704, which
+  therefore had 2 fewer Dataset/Distribution records. No stage reads those snapshots. Both fetched in
+  build 202611041048 (`snapshot-cshl_curated`, `snapshot-rapdb_curated`).
 
-## Review of the M1b build (fixed in code; data fixes need the next build)
+## Review of the M1b build (all fixes live since build 202611041048)
 
-An independent review reproduced 6 defects. All are fixed in the code. The API fixes are live; the
-data fixes reach the graph with the next build. That build was refused at kg00 on 2026-10-29 18:47,
-because a release70 `refresh-curated` run (decorate + Solr) had started and kg00 never builds
-alongside a decorate stage.
+An independent review reproduced 6 defects, and all are fixed. The API fixes went live at once. The
+data fixes needed a new build, which kg00 refused on 2026-10-29 18:47: a release70 `refresh-curated`
+run (decorate + Solr) had started, and kg00 never builds alongside a decorate stage. They went live
+with build 202611041048 on 2026-11-04.
 
-- **Data (needs the next build):** 32,118 rsIDs span biallelic records with different REFs (e.g.
+- **Data:** 32,118 rsIDs span biallelic records with different REFs (e.g.
   rs162690701: TCAAAA>T and TCAAA>T). Build 202610291704 kept only the shortest REF, so the end
   coordinate is short. Nodes now carry `alleles: [{ref, alt}]` and end = pos + longest REF − 1.
-- **KGX TSV (needs the next build):** KGX reads the text `false` in `negated` as true, so false is
+- **KGX TSV:** KGX reads the text `false` in `negated` as true, so false is
   now written empty. `|` in edge `method`, `source_record` and `original_evidence` is escaped like
   node text (3,392,085 + 23,630 rows were affected).
 - **API (live):**
@@ -95,3 +100,52 @@ Verified correct by the same review: variant positions, alleles, SO class and st
 REF issue); PTV/PAV flags against the source columns; LoF calls for 87 pairs; organ calls for 40 genes
 against Mongo; detected-in against Solr; derived homologs and expression against Mongo; paging over
 PO:0009005 (194,831 edges with negated ones = degree); manifest/RO-Crate checksums; UI safety.
+
+### Build 202611041048 against 202610291704
+
+The new build was diffed against the old one with DuckDB over `parquet/final/` (all 9,982,861 nodes
+and 19,028,859 Mongo edges). The only differences:
+
+- **SequenceVariant nodes.** Every node's attributes changed shape: `ref` + `alts` became
+  `alleles: [{ref, alt}]` (209,619 variants have more than one allele). 32,118 ends got longer and none
+  got shorter. `so_class` and `studies` are identical on all 4,346,834 nodes. Nothing in the API, UI,
+  eval or MCP code read `ref` or `alts`. Example: `dbsnp:rs162690701` has alleles TCAAA>T and TCAAAA>T
+  and end 57566877.
+- **Per-build provenance nodes.** IngestRun, SoftwareAgent, the config Dataset, the 2026-11-04 snapshot
+  Datasets and their Distributions changed. The two curated-feed snapshots that failed to fetch last
+  time came through, giving 4 more nodes.
+- **Edges.** Only `method` on the 3,545,448 `gene_qtl` edges changed (`qtl-containment@b473940` →
+  `@ae59d78`). Every other column of every edge is identical.
+- **KGX TSV.** `negated` is `true` on 941,697 rows (the negated organ calls) and empty on the rest.
+  KGX's own TSV reader returns `True` for the first and no property for the second. No `|` remains in
+  `gramene:method`, `gramene:source_record` or `gramene:original_evidence`.
+
+`sha256sum -c manifest.sha256` passes, and `kgx validate` reports zero errors (2 known `in_taxon` false
+positives dropped). Eval: 50/50 gold and 100% citation, p95 41 ms. The regenerated gold is
+byte-identical to the previous `questions.jsonl`.
+
+## Gene references cited by DOI only (release70 format)
+
+Release70 stores references that have no PMID as separate xrefs:
+`{db: 'DOI', source: 'rap-db' | 'CSHL', text, ids: ['10.…']}`. Previously the extractor kept only
+`PUBMED` xrefs, so these would have been dropped silently. kg10 now extracts `DOI` xrefs too, and kg20
+turns them into `mentions` edges. Each edge's `source_record` names the xref db, for example
+`genes.xrefs[db=DOI]`, or `db=DOI,PUBMED` when one gene cites the same paper both ways.
+
+On release70's anchors this adds 240 gene–DOI edges over 169 publications: 239 from `infores:rap-db`
+and 1 from `infores:sorghumbase-curation`. sorghum11 has no `DOI` xrefs yet, and on its current input
+the change reproduces all 34,270 mention edges exactly.
+
+The release70 publication update (CSHL curation, RAP-DB titles) is due to reach sorghum11 later. On
+the anchor genomes it moves:
+
+| | sorghum11 now | release70 |
+|---|---|---|
+| sorghum gene–PMID pairs | 186 | 1,185 |
+| rice gene–PMID pairs | 8,549 | 9,403 |
+| rice gene–DOI pairs | 0 | 244 |
+
+That is about +6% on `pub_mentions` and +1.5% on publications, inside the ±10% gates. When it lands,
+rebuild and re-record the expectations for those families. Gene-xref `text` is never used as a
+publication title: for geneRIF rows it is the GeneRIF statement. Titles come from IDFs, PubMed and
+Crossref.

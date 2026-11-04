@@ -49,7 +49,7 @@ if (want('genes')) {
   const wXref = new NdjsonWriter(X('gene_xref'));
   const wPath = new NdjsonWriter(X('gene_pathway'));
   const wO2O = new NdjsonWriter(X('gene_o2o'));
-  const XDB = new Set(['GO', 'PO', 'TO', 'domains', 'PUBMED', 'Grassius']);
+  const XDB = new Set(['GO', 'PO', 'TO', 'domains', 'PUBMED', 'DOI', 'Grassius']);   // DOI: references with no PMID (rap-db, CSHL; release70 on)
   const genomes = maps.map(m => m.taxon_id);
   const t0 = Date.now();
   let done = 0;

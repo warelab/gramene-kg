@@ -265,9 +265,9 @@ const parsePubs = (raw) => {
 const wMent = new NdjsonWriter(buildOut('work', 'mentions.ndjson'));
 let unparsed = 0;
 for (const line of fs.readFileSync(buildOut('extract', 'gene_xref.ndjson'), 'utf8').split('\n')) {
-  if (!line) continue; const r = JSON.parse(line); if (r.db !== 'PUBMED') continue;
+  if (!line) continue; const r = JSON.parse(line); if (r.db !== 'PUBMED' && r.db !== 'DOI') continue;
   const ids = parsePubs(r.id); if (!ids.length) { unparsed++; continue; }
-  for (const p of ids) await wMent.write({ pub: p, target: 'gramene.gene:' + r.gene, kind: 'gene', source: r.source ?? 'core', text: r.text, raw: r.id });
+  for (const p of ids) await wMent.write({ pub: p, target: 'gramene.gene:' + r.gene, kind: 'gene', source: r.source ?? 'core', text: r.text, raw: r.id, xdb: r.db });
 }
 for (const line of fs.readFileSync(buildOut('extract', 'idf.ndjson'), 'utf8').split('\n')) {
   if (!line) continue; const r = JSON.parse(line);
@@ -294,7 +294,9 @@ counts.dropped.unparsed_publication_strings = unparsed;
   fs.writeFileSync(buildOut('work', 'doi_to_pmid.ndjson'), rows.map(r => JSON.stringify({ doi: 'doi:' + r.doi.toLowerCase(), pmid: r._id })).join('\n') + '\n');
   counts.doi_to_pmid_known = rows.length;
 }
-await exec(`CREATE TABLE mentions_raw AS SELECT * FROM read_json_auto(${sqlStr(buildOut('work', 'mentions.ndjson'))}, format='newline_delimited')`);
+// explicit columns: xdb is written only on gene rows, and a release with no gene mentions must still bind it
+await exec(`CREATE TABLE mentions_raw AS SELECT * FROM read_json(${sqlStr(buildOut('work', 'mentions.ndjson'))}, format='newline_delimited',
+  columns={pub:'VARCHAR', target:'VARCHAR', kind:'VARCHAR', source:'VARCHAR', text:'VARCHAR', raw:'VARCHAR', xdb:'VARCHAR'})`);
 await exec(`CREATE TABLE doi2pmid AS SELECT DISTINCT doi, min(pmid) AS pmid FROM read_json(${sqlStr(buildOut('work', 'doi_to_pmid.ndjson'))}, format='newline_delimited', columns={doi:'VARCHAR', pmid:'VARCHAR'}) GROUP BY doi`);
 await exec(`CREATE TABLE mentions AS SELECT coalesce(d.pmid, m.pub) AS pub, m.* EXCLUDE (pub) FROM mentions_raw m LEFT JOIN doi2pmid d ON d.doi = m.pub`);
 counts.dropped.doi_mentions_remapped_to_pmid = Number((await q(`SELECT count(*)::BIGINT n FROM mentions_raw m JOIN doi2pmid d ON d.doi = m.pub`))[0].n);
@@ -429,12 +431,12 @@ await writeEdges('qtl_genome', edgeSql('qtl_genome', 'qtls', { subject: `'gramen
 // publications -> genes / experiments / studies / populations
 const mPks = Object.entries(F.publication_mention).filter(([k]) => k !== 'default').map(([k, v]) => `WHEN ${sqlStr(k)} THEN ${sqlStr(v.primary_knowledge_source)}`).join(' ');
 const mAt = Object.entries(F.publication_mention).filter(([k]) => k !== 'default').map(([k, v]) => `WHEN ${sqlStr(k)} THEN ${sqlStr(v.agent_type)}`).join(' ');
-await writeEdges('pub_mentions', edgeSql('pub_mentions', `(SELECT pub, target, kind, source, min(text) AS text, min(raw) AS raw FROM mentions GROUP BY ALL)`, {
+await writeEdges('pub_mentions', edgeSql('pub_mentions', `(SELECT pub, target, kind, source, min(text) AS text, min(raw) AS raw, string_agg(DISTINCT xdb, ',' ORDER BY xdb) AS xdb FROM mentions GROUP BY ALL)`, {
   subject: 'pub', object: 'target', predicate: `'biolink:mentions'`,
   pks: `sql:CASE WHEN kind = 'experiment' THEN 'infores:expression-atlas' WHEN kind IN ('variation_study','population') THEN 'infores:ensembl-variation'
          ELSE CASE source ${mPks} ELSE ${sqlStr(F.publication_mention.default.primary_knowledge_source)} END END`,
   kl: 'knowledge_assertion', at: `sql:CASE WHEN kind = 'gene' THEN CASE source ${mAt} ELSE 'not_provided' END ELSE 'manual_agent' END`,
-  osubj: 'raw', rec: `sql:CASE kind WHEN 'gene' THEN '${RELEASE}.genes.xrefs[db=PUBMED]' WHEN 'experiment' THEN 'atlas IDF' ELSE 'ensembl variation REST' END`,
+  osubj: 'raw', rec: `sql:CASE kind WHEN 'gene' THEN '${RELEASE}.genes.xrefs[db=' || coalesce(xdb, 'PUBMED') || ']' WHEN 'experiment' THEN 'atlas IDF' ELSE 'ensembl variation REST' END`,
   qualifiers: `to_json({mention_source: source, statement: text})` }));
 
 // TF families
