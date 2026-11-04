@@ -1,0 +1,152 @@
+#!/usr/bin/env bash
+# kg-backup [--dry-run] [--require-curation] — nightly mongodump of the two persistent, non-reproducible KG dbs (kg_meta, kg_curation).
+#   Build dbs (kg_<release>_b*) are rebuildable and are never dumped. See docs/backups.md (cron line, restore).
+#   archive  /scratch/olson/gramene-kg/backups/<db>-<YYYYmmddTHHMMSS>.archive.gz (+ .sha256 sidecar); both appear only once verified
+#   verify   on the .partial: gzip -t, sha256 (sidecar read back), mongorestore --dryRun -v (every live collection "found"); then rename
+#   prune    our own pattern only, mtime > 30 days, never the newest verified archive of a db; weekly copy Sundays or when none < 7 days
+#   kg_curation absent: WARN + exit 0 (pre-M3) unless KG_BACKUP_REQUIRE_CURATION=1 / --require-curation, or an earlier kg_curation archive exists
+set -euo pipefail
+export LC_ALL=C
+
+# pinned tools (mongodb-database-tools 100.13.0 + mongosh from /usr/bin)
+MONGODUMP=/usr/bin/mongodump; MONGORESTORE=/usr/bin/mongorestore; MONGOSH=/usr/bin/mongosh
+SHA256SUM=/usr/bin/sha256sum; GZIP=/usr/bin/gzip; FLOCK=/usr/bin/flock
+MONGO_URI=mongodb://127.0.0.1:27017
+DBS=(kg_meta kg_curation)                      # the ONLY dbs this script dumps
+BACKUP_DIR=/scratch/olson/gramene-kg/backups
+WEEKLY_DIR=/home/olson/backups/gramene-kg
+LOG=/scratch/olson/gramene-kg/logs/backup.log
+ERRLOG=$LOG                                     # tool stderr; /dev/stderr on --dry-run
+LOCK=$BACKUP_DIR/.kg-backup.lock
+RETAIN_DAYS=30
+NAME_RE='kg_(meta|curation)-[0-9]{8}T[0-9]{6}\.archive\.gz(\.sha256)?'   # prune/copy match only this (basename); *.partial never matches
+
+DRY=0
+REQUIRE_CURATION=${KG_BACKUP_REQUIRE_CURATION:-0}
+for a in "$@"; do
+  case "$a" in --dry-run|-n) DRY=1; ERRLOG=/dev/stderr ;; --require-curation) REQUIRE_CURATION=1 ;;
+    -h|--help) sed -n '2,7p' "$0"; exit 0 ;; *) echo "usage: kg-backup [--dry-run] [--require-curation]" >&2; exit 2 ;; esac
+done
+case "$REQUIRE_CURATION" in 0|1) ;; *) echo "kg-backup: KG_BACKUP_REQUIRE_CURATION must be 0 or 1, got '$REQUIRE_CURATION'" >&2; exit 2 ;; esac
+
+mkdir -p "$(dirname "$LOG")"
+# dry runs never write the log; a failing log append (disk full) must not mask the real error, stderr still carries it
+log() { local m tag=''; [ $DRY = 1 ] && tag=' DRY'; m="$(date '+%F %T') [$$]$tag $*"; echo "$m" >&2; [ $DRY = 1 ] || echo "$m" >> "$LOG" 2>/dev/null || true; }
+die() { log "FAIL: $*"; exit 1; }
+run() { if [ $DRY = 1 ]; then log "would: $*"; else "$@"; fi; }
+for t in "$MONGODUMP" "$MONGORESTORE" "$MONGOSH" "$SHA256SUM" "$GZIP" "$FLOCK"; do [ -x "$t" ] || die "missing tool $t"; done
+
+if [ $DRY = 0 ]; then mkdir -p "$BACKUP_DIR" "$WEEKLY_DIR"; fi
+[ -d "$BACKUP_DIR" ] || die "no $BACKUP_DIR"
+exec 9>>"$LOCK"
+"$FLOCK" -n 9 || die "another kg-backup holds $LOCK"
+
+# CLEAN: paths removed if the run exits non-zero — temp names, plus a final name only during the two-rename commit window.
+# Invariant: an archive with its final name AND its .sha256 sidecar exists only after full verification.
+CLEAN=()
+trap 'rc=$?; [ $rc = 0 ] || { for p in "${CLEAN[@]+"${CLEAN[@]}"}"; do rm -f -- "$p" || true; done; log "exit $rc"; }; exit $rc' EXIT
+
+sha_of() { local s; s=$("$SHA256SUM" < "$1") || return 1; s=${s%% *}; [[ $s =~ ^[0-9a-f]{64}$ ]] || return 1; echo "$s"; }
+# commit_pair <src> <src.sidecar-tmp> <dst>: rename archive then sidecar; a crash between leaves no sidecar => not "verified"
+commit_pair() {
+  CLEAN+=("$3"); mv -- "$1" "$3" || die "rename $1"
+  mv -- "$2" "$3.sha256" || die "rename $2"
+  CLEAN=()
+}
+
+TS=$(date +%Y%m%dT%H%M%S)
+log "start ts=$TS dbs=${DBS[*]} dir=$BACKUP_DIR require_curation=$REQUIRE_CURATION"
+# $(...) not <(...): a failing mongosh must reach die
+dbl=$("$MONGOSH" --quiet --norc "$MONGO_URI" --eval 'db.adminCommand({listDatabases:1,nameOnly:true}).databases.forEach(d=>print(d.name))' 2>>"$ERRLOG") \
+  || die "listDatabases failed"
+mapfile -t LIVE_DBS <<< "$dbl"
+[ -n "$dbl" ] || die "listDatabases returned nothing"
+
+NEW=()
+for db in "${DBS[@]}"; do
+  if ! printf '%s\n' "${LIVE_DBS[@]}" | grep -qx -- "$db"; then
+    if [ "$db" = kg_curation ]; then
+      [ "$REQUIRE_CURATION" = 1 ] && die "$db not present on $MONGO_URI (KG_BACKUP_REQUIRE_CURATION=1)"
+      prior=$(find "$BACKUP_DIR" "$WEEKLY_DIR" -maxdepth 1 -type f -regextype posix-extended -regex ".*/$db-[0-9]{8}T[0-9]{6}\.archive\.gz" -print -quit 2>/dev/null || true)
+      [ -z "$prior" ] || die "$db not present on $MONGO_URI but an earlier archive exists ($prior) — db lost?"
+      log "WARN skip $db: not present on $MONGO_URI and never backed up (pre-M3); exit stays 0 — set KG_BACKUP_REQUIRE_CURATION=1 in cron once M3 lands"
+      continue
+    fi
+    die "$db not present on $MONGO_URI"
+  fi
+  out="$BACKUP_DIR/$db-$TS.archive.gz"; base=$(basename "$out")
+  [ -e "$out" ] || [ -e "$out.sha256" ] && die "$out (or its .sha256) already exists"
+  cl=$("$MONGOSH" --quiet --norc "$MONGO_URI/$db" --eval 'db.getCollectionNames().filter(c=>!c.startsWith("system.")).forEach(c=>print(c))' 2>>"$ERRLOG") \
+    || die "listCollections $db failed"
+  [ -n "$cl" ] || die "$db has no collections"
+  mapfile -t COLLS <<< "$cl"
+  log "dump $db (${#COLLS[@]} collections: ${COLLS[*]}) -> $out"
+  if [ $DRY = 1 ]; then
+    log "would: $MONGODUMP --uri=$MONGO_URI --db=$db --gzip --archive=$out.partial"
+    log "would: on $base.partial: $GZIP -t; sha256 -> $base.sha256.partial (read back); $MONGORESTORE -v --dryRun --gzip --nsInclude '$db.*'"
+    log "would: rename $base.partial -> $base, $base.sha256.partial -> $base.sha256"
+    continue
+  fi
+  part="$out.partial"; sidetmp="$out.sha256.partial"
+  CLEAN=("$part" "$sidetmp")
+  "$MONGODUMP" --quiet --uri="$MONGO_URI" --db="$db" --gzip --archive="$part" 2>>"$LOG" || die "mongodump $db"
+  # verify the .partial before it gets a final name, and before anything is pruned
+  sum=$(sha_of "$part") || die "sha256 $part"
+  "$GZIP" -t -- "$part" || die "gzip -t $part"
+  vout=$("$MONGORESTORE" -v --uri="$MONGO_URI" --dryRun --gzip --archive="$part" --nsInclude "$db.*" 2>&1) || { echo "$vout" >> "$LOG" 2>/dev/null || true; die "mongorestore --dryRun $part"; }
+  echo "$vout" | sed 's/^/    dryRun: /' >> "$LOG" || die "write $LOG"
+  echo "$vout" | grep -q 'dry run completed' || die "dryRun did not complete for $part"
+  for c in "${COLLS[@]}"; do
+    echo "$vout" | grep -qF "found collection $db.$c bson" || die "$part lacks $db.$c"
+  done
+  # sidecar (sha256sum format, relative final name) to a temp name, read back, archive re-hashed unchanged
+  printf '%s  %s\n' "$sum" "$base" > "$sidetmp" || die "write $sidetmp"
+  [ "$(cat -- "$sidetmp")" = "$sum  $base" ] || die "sidecar $sidetmp did not read back"
+  [ "$(sha_of "$part")" = "$sum" ] || die "sha256 of $part changed during verification"
+  commit_pair "$part" "$sidetmp" "$out"
+  log "ok $db $base $(stat -c %s "$out") bytes sha256=$sum colls=${#COLLS[@]}"
+  NEW+=("$out")
+done
+
+# keep: per db, the newest archive whose sidecar exists and checks — never pruned, whatever its age
+KEEP=()
+for db in "${DBS[@]}"; do
+  k=''
+  while IFS= read -r a; do
+    [ -n "$a" ] && [ -f "$a.sha256" ] || continue
+    if (cd "$BACKUP_DIR" && "$SHA256SUM" --quiet -c -- "$(basename "$a").sha256" >/dev/null 2>&1); then k=$a; break; fi
+    log "WARN $a: sidecar does not match, not counted as verified"
+  done < <(find "$BACKUP_DIR" -maxdepth 1 -type f -regextype posix-extended -regex ".*/$db-[0-9]{8}T[0-9]{6}\.archive\.gz" -print | sort -r)
+  if [ -n "$k" ]; then KEEP+=("$k" "$k.sha256"); log "keep newest verified $db: $(basename "$k")"
+  else log "keep: no verified $db archive in $BACKUP_DIR"; fi
+done
+
+# prune: fixed dir, own basename pattern, regular files, older than RETAIN_DAYS (find -mtime +N == > N*24h, whole days), minus KEEP
+prune_list() { find "$BACKUP_DIR" -maxdepth 1 -type f -regextype posix-extended -regex ".*/$NAME_RE" -mtime +"$RETAIN_DAYS" -print | grep -vxF -f <(printf '%s\n' "${KEEP[@]+"${KEEP[@]}"}") || true; }
+mapfile -t OLD < <(prune_list)
+pruned=0
+for f in "${OLD[@]}"; do [ -n "$f" ] || continue; log "prune $f"; run rm -f -- "$f"; pruned=$((pruned+1)); done
+[ $pruned -gt 0 ] || log "prune: nothing older than $RETAIN_DAYS days (outside the kept newest verified)"
+
+# weekly copy: Sunday, or nothing in the weekly dir from the last 7 days; same .partial -> verify -> rename discipline
+recent=0
+[ -d "$WEEKLY_DIR" ] && recent=$(find "$WEEKLY_DIR" -maxdepth 1 -type f -regextype posix-extended -regex ".*/$NAME_RE" -mtime -7 | wc -l)
+if [ "$(date +%u)" = 7 ] || [ "$recent" = 0 ]; then
+  if [ $DRY = 1 ]; then log "would: weekly copy (dow=$(date +%u) recent=$recent) of this run's archives + .sha256 -> $WEEKLY_DIR"
+  elif [ ${#NEW[@]} = 0 ]; then log "weekly: no new archives to copy"
+  else
+    for f in "${NEW[@]}"; do
+      b=$(basename "$f"); w="$WEEKLY_DIR/$b"
+      CLEAN=("$w.partial" "$w.sha256.partial")
+      cp -p -- "$f" "$w.partial" || die "weekly copy $b"
+      cp -p -- "$f.sha256" "$w.sha256.partial" || die "weekly copy $b.sha256"
+      [ "$(sha_of "$w.partial")" = "$(cut -d' ' -f1 "$w.sha256.partial")" ] || die "weekly copy sha256 $b"
+      commit_pair "$w.partial" "$w.sha256.partial" "$w"
+      # cp -p keeps the archive mtime; touch the sidecar so the "last 7 days" test reflects the copy time
+      touch -- "$w.sha256"
+      log "weekly: copied $b -> $WEEKLY_DIR"
+    done
+  fi
+else log "weekly: skip (dow=$(date +%u), $recent recent file(s) in $WEEKLY_DIR)"; fi
+
+log "done new=${#NEW[@]} pruned=$pruned"
