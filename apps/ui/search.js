@@ -1,6 +1,6 @@
 // #/search?q=&category=&genome=&source=&start=
 import { api } from './api.js';
-import { h, buildHash, nodeHref, nodeLink, fmtNum, truncate, looksLikeCurie } from './lib.js';
+import { h, buildHash, nodeHref, nodeLink, fmtNum, truncate, looksLikeCurie, fill } from './lib.js';
 import { announce, setTitle, badge, errorBox } from './ui.js';
 
 const ROWS = 20;
@@ -32,7 +32,7 @@ export async function renderSearch(main, route, signal) {
     h('a', { href: link({ [k]: '' }), class: 'chip', 'aria-label': `Remove ${label} filter ${P[k]}` }, `${label}: ${P[k]} ×`));
 
   if (err) {
-    main.replaceChildren(h('h1', null, 'Search'), jump, active.length ? h('p', { class: 'chips' }, active) : null, errorBox(err));
+    fill(main, h('h1', null, 'Search'), jump, active.length ? h('p', { class: 'chips' }, active) : null, errorBox(err));
     announce(`Search failed: ${err.message}`);
     return;
   }
@@ -72,7 +72,7 @@ export async function renderSearch(main, route, signal) {
     h('span', null, `${fmtNum(start + 1)}–${fmtNum(Math.min(start + data.length, total))} of ${fmtNum(total)}`),
     start + ROWS < total ? h('a', { href: link({ start: start + ROWS }), rel: 'next' }, 'Next →') : h('span', { class: 'muted' }, 'Next →')) : null;
 
-  main.replaceChildren(
+  fill(main,
     h('h1', null, q ? ['Search: ', h('q', null, q)] : 'Browse all nodes'),
     jump, active.length ? h('p', { class: 'chips' }, 'Filters: ', active) : null, resolved,
     h('div', { class: 'search-layout' }, facetBox,

@@ -1,4 +1,5 @@
-// kg50 export: KGX TSV + KGX JSON lines (whole graph and per primary knowledge source), a
+// kg50 export: KGX TSV + KGX JSON lines (whole graph and per primary knowledge source, plus the curated
+// layer in its own files when the build has curated edges), a
 // Biolink-native validation sample, the JSON-LD context, manifest.json, manifest.sha256 and
 // ro-crate-metadata.json under BUILD_OUT.
 //
@@ -73,6 +74,20 @@ const sources = await q(`SELECT primary_knowledge_source AS s, count(*)::BIGINT 
 for (const { s } of sources) await emit('source', `SELECT ${edgeCols('tsv')} FROM e WHERE primary_knowledge_source = ${sqlStr(s)}`,
   OUT('by_source', `${base}_${s.replace(/^infores:/, '')}_edges.tsv.gz`));
 
+// curated layer (gramene:layer = curated) in its own TSV + JSON lines, only when there is one: the by-source
+// infores:sorghumbase-curation file also holds ETL edges (CSHL mentions, gene_to_curated)
+const layers = await q(`SELECT layer AS l, count(*)::BIGINT n FROM e GROUP BY 1 ORDER BY 1`);
+const nCurated = Number(layers.find(r => r.l === 'curated')?.n ?? 0);
+const layerFiles = [];
+if (nCurated) {
+  fs.mkdirSync(OUT('by_layer'), { recursive: true });
+  for (const fmt of ['tsv', 'jsonl']) {
+    const f = OUT('by_layer', `${base}_curated_edges.${fmt}.gz`);
+    await emit('layer', `SELECT ${edgeCols(fmt === 'tsv' ? 'tsv' : 'json')} FROM e WHERE layer = 'curated' ORDER BY id`, f);
+    layerFiles.push(path.relative(buildOut(), f));
+  }
+}
+
 // Biolink-native sample: 1% of edges per family whose stored predicate is already Biolink, plus every node they touch
 await exec(`CREATE TABLE sample_e AS SELECT * FROM e WHERE starts_with(predicate, 'biolink:') AND hash(id) % 100 = 0`);
 await exec(`CREATE TABLE sample_n AS SELECT n.* FROM n SEMI JOIN (SELECT subject AS id FROM sample_e UNION SELECT object FROM sample_e) x ON x.id = n.id`);
@@ -101,8 +116,11 @@ const git = (() => { try { return execFileSync('git', ['-C', KG_ROOT, 'rev-parse
 const manifest = {
   release: RELEASE, build_id: BUILD_ID, ingest_run: runId, generated_at: new Date().toISOString(),
   biolink_version: '4.4.6', schema: { path: 'schema/gramene_kg.yaml', sha256: await sha256File(schemaFile) }, git_head: git,
-  counts: { nodes: Number(tot.nodes), edges: Number(tot.edges), edges_by_source: Object.fromEntries(sources.map(r => [r.s, Number(r.n)])) },
+  counts: { nodes: Number(tot.nodes), edges: Number(tot.edges), edges_by_source: Object.fromEntries(sources.map(r => [r.s, Number(r.n)])),
+    edges_by_layer: Object.fromEntries(layers.map(r => [r.l ?? 'null', Number(r.n)])) },
   kgx: { format: 'KGX TSV (lists joined with |) and KGX JSON lines', predicate_projection: { ...KGX_PRED, default_non_biolink: 'biolink:related_to' },
+    ...(layerFiles.length ? { by_layer: { curated: { edges: nCurated, files: layerFiles,
+      rule: 'edges with gramene:layer curated (published assertions of public kg_curation workspaces); also in the whole-graph and by-source files' } } } : {}),
     sample: { nodes: Number(sampleCounts.nodes), edges: Number(sampleCounts.edges), rule: '1% of edges with a Biolink predicate (hash(id) % 100 = 0) and the nodes they reference' } },
   files: kgxFiles,
 };
@@ -132,7 +150,9 @@ const crate = {
       hasPart: [...kgxFiles.map(f => ({ '@id': f.path })), { '@id': 'manifest.json' }, { '@id': 'manifest.sha256' }] },
     { '@id': 'https://www.sorghumbase.org', '@type': 'Organization', name: 'SorghumBase' },
     { '@id': `gramene.release:${RELEASE}`, '@type': 'Dataset', name: `${cfg.site} ${RELEASE}` },
-    ...kgxFiles.map(f => ({ '@id': f.path, '@type': 'File', contentSize: String(f.bytes), sha256: f.sha256,
+    ...kgxFiles.map(f => ({ '@id': f.path, '@type': 'File',
+      ...(layerFiles.includes(f.path) ? { name: 'Curated layer edges', description: `${nCurated} edges from published assertions of public kg_curation workspaces (gramene:layer curated)` } : {}),
+      contentSize: String(f.bytes), sha256: f.sha256,
       encodingFormat: f.path.endsWith('.tsv.gz') ? 'text/tab-separated-values' : f.path.endsWith('.jsonl.gz') ? 'application/x-ndjson' : 'application/ld+json' })),
     { '@id': 'manifest.json', '@type': 'File', encodingFormat: 'application/json' },
     { '@id': 'manifest.sha256', '@type': 'File', encodingFormat: 'text/plain' },

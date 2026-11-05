@@ -3,13 +3,24 @@
 //   card  deterministic text for Solr-indexed nodes; every fact ends with its sources and release
 //   solr  true for non-gene nodes and anchor-genome genes (variants are exact-id lookups, not indexed)
 // and the materialised edge table for Mongo (parquet/final/edges_mongo.parquet) with endpoint classes.
+import fs from 'node:fs';
+import path from 'node:path';
 import { env, buildOut, q, exec, sqlStr, log } from './kgio.mjs';
+import { xrefMergeSql } from './curated.mjs';
 
 const RELEASE = env('RELEASE');
 const G = (kind) => sqlStr(buildOut('parquet', 'graph', kind, '*.parquet'));
 const FINAL = (n) => sqlStr(buildOut('parquet', 'final', `${n}.parquet`));
 
 await exec(`CREATE TABLE nodes AS SELECT * FROM read_parquet(${G('nodes')}, union_by_name=true)`);
+// curated merge patch from kg20, re-applied (idempotent) because kg25 rewrites Publication attrs and xrefs;
+// xrefs as in kg20: the node's own list unchanged, then the curated xrefs it lacks
+const OVERLAY = path.join(env('BUILD_OUT'), 'parquet', 'graph', 'curated', 'node_overlay.parquet');
+if (fs.existsSync(OVERLAY)) {
+  await exec(`UPDATE nodes SET xrefs = ${xrefMergeSql('nodes.xrefs', 'o.xrefs')}, attrs = json_merge_patch(nodes.attrs, o.patch)::VARCHAR
+    FROM read_parquet(${sqlStr(OVERLAY)}) o WHERE o.id = nodes.id`);
+  log(`curated overlay re-applied: ${(await q(`SELECT count(*)::BIGINT n FROM read_parquet(${sqlStr(OVERLAY)})`))[0].n} nodes`);
+}
 await exec(`CREATE TABLE edges AS SELECT id, subject, predicate, object, primary_knowledge_source, original_evidence, slot FROM read_parquet(${G('edges')}, union_by_name=true)`);
 await exec(`CREATE TABLE card_set AS SELECT id FROM nodes WHERE (cls <> 'GeneModel' OR coalesce(json_extract(attrs, '$.anchor')::BOOLEAN, false)) AND cls <> 'SequenceVariant'`);
 log(`nodes ${(await q('SELECT count(*)::BIGINT n FROM nodes'))[0].n}, card set ${(await q('SELECT count(*)::BIGINT n FROM card_set'))[0].n}`);

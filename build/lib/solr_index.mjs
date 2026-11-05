@@ -12,12 +12,12 @@ const nd = buildOut('work', 'solr_docs.ndjson');
 
 // numeric part of an OBO / InterPro id, as the genes core's *__ancestors fields store it
 const intId = (expr) => `try_cast(regexp_extract(${expr}, '([0-9]+)$', 1) AS BIGINT)`;
-await exec(`CREATE TABLE src AS SELECT node, list(DISTINCT pks ORDER BY pks) AS sources FROM (
-    SELECT subject AS node, primary_knowledge_source AS pks FROM read_parquet(${EDGES}, union_by_name=true)
-    UNION ALL SELECT object, primary_knowledge_source FROM read_parquet(${EDGES}, union_by_name=true)) GROUP BY node`);
+await exec(`CREATE TABLE src AS SELECT node, list(DISTINCT pks ORDER BY pks) AS sources, bool_or(layer = 'curated') AS curated FROM (
+    SELECT subject AS node, primary_knowledge_source AS pks, layer FROM read_parquet(${EDGES}, union_by_name=true)
+    UNION ALL SELECT object, primary_knowledge_source, layer FROM read_parquet(${EDGES}, union_by_name=true)) GROUP BY node`);
 await exec(`COPY (
   SELECT n.id, n.category, n.cls, n.name, n.description, n.aliases, n.xrefs, n.in_taxon, n.genome, n.region, n.start, n."end",
-         n.deg, n.degree, n.card, s.sources,
+         n.deg, n.degree, n.card, s.sources, (coalesce(s.curated, false) OR json_exists(n.attrs, '$.curated')) AS curated,
          json_extract_string(n.attrs, '$.system_name') AS system_name, json_extract_string(n.attrs, '$.biotype') AS biotype,
          coalesce(json_extract(n.attrs, '$.stub')::BOOLEAN, false) AS stub,
          CASE n.cls
@@ -45,7 +45,7 @@ const toDoc = (r) => {
     synonyms_t: r.aliases, aliases_lc_ss: r.aliases?.map(a => String(a).toLowerCase()), card_t: r.card, xref_ss: r.xrefs,
     release_s: RELEASE, build_s: BUILD_ID, taxon_s: r.in_taxon, genome_s: r.genome, system_name_s: r.system_name, biotype_s: r.biotype,
     region_s: r.region, start_l: r.start, end_l: r.end, degree_i: r.degree, source_ss: r.sources, is_stub_b: r.stub,
-    has_publications_b: false, has_curated_b: false, gene_fq_s: r.gene_fq };
+    has_publications_b: false, has_curated_b: r.curated === true, gene_fq_s: r.gene_fq };
   const deg = JSON.parse(r.deg || '{}');
   for (const [k, v] of Object.entries(deg)) d[`deg_${safe(k)}`] = v;
   d.has_publications_b = (deg['biolink:mentions|in'] ?? 0) > 0;

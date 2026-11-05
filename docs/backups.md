@@ -10,7 +10,7 @@ Only two KG databases are persistent and non-reproducible; everything else (`kg_
 No other db is ever dumped (`DBS=(kg_meta kg_curation)` is hard-coded).
 
 **kg_curation absent.** Until M3 the db does not exist. Every run then logs `WARN skip kg_curation: not present … and never backed up (pre-M3)` and still exits 0. That leniency is bounded:
-- `KG_BACKUP_REQUIRE_CURATION=1` (env) or `--require-curation` makes absence a failure (`FAIL`, exit 1, the cron `logger` fallback fires). **Add it to the cron line once M3 lands** (see Cron). Any value other than `0`/`1` is a usage error (exit 2).
+- `KG_BACKUP_REQUIRE_CURATION=1` (env) or `--require-curation` makes absence a failure (`FAIL`, exit 1, the cron `logger` fallback fires). The cron line sets it (M3 has landed). Any value other than `0`/`1` is a usage error (exit 2).
 - Even without it, absence is a failure as soon as any `kg_curation-*.archive.gz` exists in the backup or weekly dir: once backed up, a missing db means it was lost, not that it has not been created yet.
 
 ## What a run does
@@ -29,9 +29,9 @@ Mongo: standalone `mongod` on `127.0.0.1:27017`, no auth. Tools pinned to `/usr/
 
 ## Cron (not installed — add with `crontab -e`)
 ```
-30 2 * * * env -i HOME=/home/olson PATH=/usr/bin:/bin /usr/local/gramene/gramene-kg/bin/kg-backup >/dev/null 2>&1 || echo "kg-backup failed, see /scratch/olson/gramene-kg/logs/backup.log" | /usr/bin/logger -t kg-backup
+30 2 * * * env -i HOME=/home/olson KG_BACKUP_REQUIRE_CURATION=1 PATH=/usr/bin:/bin /usr/local/gramene/gramene-kg/bin/kg-backup >/dev/null 2>&1 || echo "kg-backup failed, see /scratch/olson/gramene-kg/logs/backup.log" | /usr/bin/logger -t kg-backup
 ```
-Once M3 lands (kg_curation exists and has been backed up once), change `env -i HOME=/home/olson` to `env -i HOME=/home/olson KG_BACKUP_REQUIRE_CURATION=1`. Nothing else in the line changes.
+M3 has landed: kg_curation exists and was first backed up on 2026-11-04 (`kg_curation-20261104T162712.archive.gz`), so the line above already sets `KG_BACKUP_REQUIRE_CURATION=1`: a missing kg_curation is a failure.
 
 Everything goes to `backup.log` already; the `logger` fallback leaves a syslog trace on failure (`journalctl -t kg-backup`). Paste this comment line above it — the M2 verify step is `crontab -l | grep kg_meta`, and cron lines cannot carry trailing comments:
 ```

@@ -41,13 +41,17 @@ log(`nodes ${nNodes} in ${((Date.now() - t0) / 1000).toFixed(0)}s`);
 // ---- edges (materialised only) ----
 const edgesNd = buildOut('work', 'mongo_edges.ndjson');
 await exec(`COPY (SELECT * FROM ${FINAL('edges_mongo')}) TO ${sqlStr(edgesNd)} (FORMAT json)`);
+const nCurated = Number((await q(`SELECT count(*)::BIGINT n FROM ${FINAL('edges_mongo')} WHERE layer = 'curated'`))[0].n);
 t0 = Date.now();
 const nEdges = await swapIn(db, 'edges', ndjson(edgesNd, (r) => clean({
   _id: r.id, s: r.subject, p: r.predicate, o: r.object, sc: r.subject_cls, oc: r.object_cls, src: r.primary_knowledge_source,
   kl: r.knowledge_level, at: r.agent_type, ev: r.has_evidence, oev: r.original_evidence, pubs: r.publications, studies: r.has_supporting_studies,
   m: r.method, orig: clean({ s: r.original_subject, o: r.original_object }), rec: r.source_record, ksv: r.knowledge_source_version,
   neg: r.negated ? true : null, q: clean(JSON.parse(r.qualifiers || '{}')), fam: r.family, layer: r.layer,
-})), { meta, indexes: [{ s: 1, p: 1, _id: 1 }, { o: 1, p: 1, _id: 1 }] });
+  asn: r.asn ? { id: r.asn.id, rev: r.asn.rev } : null,
+})), { meta, indexes: [{ s: 1, p: 1, _id: 1 }, { o: 1, p: 1, _id: 1 },
+  // curated edges are few: the API's baked-edge masking looks them up by assertion id
+  ...(nCurated ? [{ key: { 'asn.id': 1 }, name: 'asn_id_curated', partialFilterExpression: { layer: 'curated' } }] : [])] });
 log(`edges ${nEdges} in ${((Date.now() - t0) / 1000).toFixed(0)}s`);
 
 // ---- manifest ----

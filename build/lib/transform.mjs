@@ -567,8 +567,15 @@ if (!NO_VARIANTS) {
     rec: `${cfg.genes_core}.expressed_in_gxa_attr_ss` }));
 }
 
-// curated layer (M3): published assertions become one more source here
-counts.curated = { note: 'kg_curation not read before M3' };
+// curated layer (M3): published assertions of public workspaces become one more source (lib/curated.mjs);
+// an empty kg_curation adds no file, node or edge
+{
+  const { curatedStage } = await import('./curated.mjs');
+  const { counts: cc, nodeCounts } = await curatedStage({ release: RELEASE, build: env('BUILD_ID'), kgRoot: KG_ROOT });
+  counts.curated = cc;
+  Object.assign(counts.nodes, nodeCounts);
+  if (cc.edges || fs.existsSync(GRAPH('edges', 'curated'))) counts.edges.curated = cc.edges;
+}
 
 fs.writeFileSync(buildOut('transform_counts.json'), JSON.stringify(counts, null, 1));
 log('transform complete', JSON.stringify({ nodes: Object.values(counts.nodes).reduce((a, b) => a + b, 0), edges: Object.values(counts.edges).reduce((a, b) => a + b, 0) }));

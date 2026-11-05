@@ -1,6 +1,6 @@
 // #/release[?id=<release>]: release + build, counts, and the build manifest (datasets, distributions, analyses, software).
 import { api, apiUrl } from './api.js';
-import { h, dl, buildHash, nodeLink, extLink, fmtNum, fmtBytes, shortSha, fmtValue } from './lib.js';
+import { h, dl, buildHash, nodeLink, extLink, fmtNum, fmtBytes, shortSha, fmtValue, fill } from './lib.js';
 import { announce, setTitle, badge, section } from './ui.js';
 
 const table = (cols, rows, caption) => h('div', { class: 'scroll' }, h('table', { class: 'data' },
@@ -14,7 +14,7 @@ export async function renderRelease(main, route, signal) {
   const { data: rels } = await api('releases', {}, { signal });
   const id = route.params.get('id') || (rels.find(r => r.is_current) ?? rels[0])?.id;
   setTitle(`Release ${id ?? ''}`);
-  if (!id) { main.replaceChildren(h('h1', null, 'Release'), h('p', null, 'No releases are loaded.')); return; }
+  if (!id) { fill(main, h('h1', null, 'Release'), h('p', null, 'No releases are loaded.')); return; }
   const [{ data: rel }, { data: man }] = await Promise.all([
     api(`releases/${encodeURIComponent(id)}`, {}, { signal }),
     api(`releases/${encodeURIComponent(id)}/manifest`, {}, { signal }),
@@ -29,7 +29,7 @@ export async function renderRelease(main, route, signal) {
   const crossChecks = Object.entries(c.cross_checks ?? {});
   const attr = (n, k) => n.attributes?.[k];
 
-  main.replaceChildren(
+  fill(main,
     h('h1', null, `Release ${id}`, ' ', row.is_current ? badge('current', 'ok') : null),
     others,
     dl([

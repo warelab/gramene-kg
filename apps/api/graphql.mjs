@@ -6,6 +6,8 @@
 // Limits (costRule below): <= 20 root fields, <= 50 aliases, one operation; depth <= 6 (introspection exempt);
 // complexity <= 2000 counting each field's backend work; introspection <= 2 x the standard IntrospectionQuery;
 // neighbors first <= 500.
+// Caller identity: the Bearer token (auth.mjs) becomes ctx.who and is passed to every core call, so curated edges
+// and nodes of private workspaces are shown exactly as REST shows them to the same caller.
 import mercurius from 'mercurius';
 import { GraphQLScalarType, GraphQLError, Kind, getNamedType, isLeafType, isAbstractType, valueFromASTUntyped, parse, getIntrospectionQuery } from 'graphql';
 import fs from 'node:fs';
@@ -239,6 +241,8 @@ type Edge {
   slot: Boolean!
   qualifiers: JSON
   provenance: EdgeProvenance!
+  "curated edges: {assertion, rev, state, workspace}; null for ETL edges"
+  curation: JSON
   "the far end (direction OUT: object, IN: subject); batched"
   other: Node
   subjectNode: Node
@@ -297,7 +301,7 @@ const DIR = { out: 'OUT', in: 'IN' };
 const toEdge = (e, rel) => {
   const p = e.provenance;
   return { id: e.id, subject: e.subject, predicate: e.predicate, object: e.object, direction: DIR[e.direction] ?? null, negated: p.negated, slot: !!e.slot,
-    qualifiers: e.qualifiers, _rel: rel,
+    qualifiers: e.qualifiers, curation: e.curation ?? null, _rel: rel,
     provenance: { primaryKnowledgeSource: p.primary_knowledge_source, aggregatorKnowledgeSource: p.aggregator_knowledge_source, knowledgeLevel: p.knowledge_level,
       agentType: p.agent_type, hasEvidence: p.has_evidence, originalEvidence: p.original_evidence, publications: p.publications, hasSupportingStudies: p.has_supporting_studies,
       method: p.method, originalSubject: p.original_subject, originalObject: p.original_object, sourceRecord: p.source_record,
@@ -327,7 +331,7 @@ const batch = (key) => async (queries, ctx) => {
   const res = new Array(queries.length).fill(null);
   for (const [rel, idx] of by) {
     const ids = idx.map(i => key(queries[i].obj)).map(x => x ?? '');
-    const { ctx: c, rows } = await core.nodesByIds(rel || undefined, ids).catch(e => { throw gqlErr(e); });
+    const { ctx: c, rows } = await core.nodesByIds(rel || undefined, ids, ctx.who).catch(e => { throw gqlErr(e); });
     idx.forEach((i, j) => { res[i] = toNode(rows[j], c.rel._id); });
   }
   return res;
@@ -336,7 +340,7 @@ const batch = (key) => async (queries, ctx) => {
 function neighborsResolver(parent, a, ctx) {
   if (a.first != null && (a.first < 1 || a.first > core.MAX_LIMIT)) throw new mercurius.ErrorWithProps(`first must be between 1 and ${core.MAX_LIMIT}`, { status: 400 });
   return call(ctx, () => core.nodeEdges(parent.id, { release: parent._rel, resolve: '0', predicate: a.predicate ?? undefined, direction: a.direction ? a.direction.toLowerCase() : undefined,
-    category: a.category ?? undefined, source: a.source ?? undefined, include_negated: a.includeNegated ? '1' : undefined, limit: a.first ?? DEF.neighbors, cursor: a.after ?? undefined }))
+    category: a.category ?? undefined, source: a.source ?? undefined, include_negated: a.includeNegated ? '1' : undefined, limit: a.first ?? DEF.neighbors, cursor: a.after ?? undefined }, ctx.who))
     .then(r => {
       const rel = relOf(r);
       const edges = r.data.map((e, i) => ({ cursor: r.cursors[i], node: toEdge(e, rel) }));
@@ -358,22 +362,22 @@ export async function registerGraphql(app) {
     JSON: JSONScalar,
     Node: { resolveType: (o) => typeNames.has(o.class) ? o.class : 'OtherNode' },
     Query: {
-      node: (_, a, ctx) => call(ctx, () => core.node(a.id, { release: a.release, genome: a.genome ?? undefined })).then(r => toNode(r.data, relOf(r))),
+      node: (_, a, ctx) => call(ctx, () => core.node(a.id, { release: a.release, genome: a.genome ?? undefined }, ctx.who)).then(r => toNode(r.data, relOf(r))),
       nodes: async (_, a, ctx) => {
         if (a.ids.length > MAX_IDS) throw new mercurius.ErrorWithProps(`at most ${MAX_IDS} ids`, { status: 400 });
-        const { ctx: c, rows } = await call(ctx, async () => { const x = await core.nodesByIds(a.release, a.ids); return { ...x, data: null, extra: {} }; });
+        const { ctx: c, rows } = await call(ctx, async () => { const x = await core.nodesByIds(a.release, a.ids, ctx.who); return { ...x, data: null, extra: {} }; });
         // exact misses fall back to the REST resolution: null when unknown; an ambiguous input is returned as its error,
         // which graphql-js turns into null at [field, i] plus an error with the candidates, so the other items survive
         return Promise.all(rows.map((n, i) => n ? toNode(n, c.rel._id)
-          : call(ctx, () => core.node(a.ids[i], { release: a.release, genome: a.genome ?? undefined })).then(r => toNode(r.data, relOf(r)), e => e.extensions?.status === 404 ? null : e)));
+          : call(ctx, () => core.node(a.ids[i], { release: a.release, genome: a.genome ?? undefined }, ctx.who)).then(r => toNode(r.data, relOf(r)), e => e.extensions?.status === 404 ? null : e)));
       },
-      resolve: (_, a, ctx) => call(ctx, () => core.resolve({ release: a.release, ids: a.ids, genome: a.genome, category: a.category })).then(r => {
+      resolve: (_, a, ctx) => call(ctx, () => core.resolve({ release: a.release, ids: a.ids, genome: a.genome, category: a.category }, ctx.who)).then(r => {
         const rel = relOf(r);
         return { resolved: r.data.resolved.map(m => toMatch(m, rel)), ambiguous: r.data.ambiguous.map(x => ({ input: x.input, candidates: x.candidates.map(m => toMatch(m, rel)) })),
           unknown: r.data.unknown, warnings: r.extra.warnings ?? [] };
       }),
       search: (_, a, ctx) => call(ctx, () => core.search({ release: a.release, q: a.q, category: a.category, genome: a.genome, source: a.source, taxon: a.taxon,
-        system_name: a.systemName, rows: a.first, start: a.offset })).then(r => {
+        system_name: a.systemName, rows: a.first, start: a.offset }, ctx.who)).then(r => {
         const rel = relOf(r);
         return { total: r.extra.total, hits: r.data.map(d => ({ ...d, geneFq: d.gene_fq, _rel: rel })), facets: r.extra.facets,
           resolved: r.extra.resolved.map(m => toMatch({ input: a.q, ...m }, rel)), geneFqCore: r.extra.gene_fq_core, warnings: r.extra.warnings };
@@ -384,8 +388,8 @@ export async function registerGraphql(app) {
           total: r.extra.total, features: r.data.slice(0, a.first).map(f => ({ ...f, _rel: relOf(r) })),
           warnings: [...r.extra.warnings, ...(r.data.length > a.first ? [`first ${a.first} of ${r.data.length} features returned`] : [])] }));
       },
-      path: (_, a, ctx) => call(ctx, () => core.findPath({ release: a.release, from: a.from, to: a.to, max_hops: a.maxHops })).then(r => r.data.map(p => ({ edges: p.map(e => toEdge(e, relOf(r))) }))),
-      edge: (_, a, ctx) => call(ctx, () => core.edge(a.id, { release: a.release })).then(r => toEdge(r.data, relOf(r))),
+      path: (_, a, ctx) => call(ctx, () => core.findPath({ release: a.release, from: a.from, to: a.to, max_hops: a.maxHops }, ctx.who)).then(r => r.data.map(p => ({ edges: p.map(e => toEdge(e, relOf(r))) }))),
+      edge: (_, a, ctx) => call(ctx, () => core.edge(a.id, { release: a.release }, ctx.who)).then(r => toEdge(r.data, relOf(r))),
       releases: async () => (await core.releaseList()).map(r => ({ ...toRelease(r), _id: r.id })),
       release: async (_, a, ctx) => {
         const r = await call(ctx, () => core.releaseInfo(a.id));
@@ -414,7 +418,7 @@ export async function registerGraphql(app) {
     schema: buildSdl(classes), resolvers, loaders, path: '/kg/graphql', graphiql: false, jit: 0,
     cache: false,                        // validationRules as a function needs cache off; depth is checked there (not queryDepth, which counts introspection)
     validationRules: ({ variables, operationName }) => [costRule({ variables: variables ?? {}, operationName })],
-    context: () => ({ kg: { warnings: new Set(), served: new Set() } }),
+    context: async (req) => ({ kg: { warnings: new Set(), served: new Set() }, who: await core.principal(req.kgUser) }),
   });
   app.graphql.addHook('onResolution', async (execution, ctx) => {
     const served = [...ctx.kg.served];

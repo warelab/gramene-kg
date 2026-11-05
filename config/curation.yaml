@@ -1,0 +1,34 @@
+# Curated layer (docs/curation.md): what curators may write through /kg/v1/curate/*.
+# Read by apps/api/curation.mjs at startup (restart the API after editing) and by the build (kg20).
+#
+# predicates: the allow-list. domain / range are Biolink categories (as on build nodes' `cat`, curated nodes'
+# category below); a subject (object) must carry at least one of them. Omitted = any category (Biolink gives
+# none narrower than NamedThing, or the predicate is deliberately open).
+predicates:
+  biolink:mentions:              {domain: [biolink:Publication, biolink:InformationContentEntity]}
+  biolink:has_phenotype:         {domain: [biolink:Gene, biolink:SequenceVariant, biolink:OrganismalEntity, biolink:MaterialSample, biolink:BiologicalEntity, biolink:PopulationOfIndividualOrganisms], range: [biolink:PhenotypicFeature]}
+  biolink:associated_with:       {}
+  biolink:related_to:            {}
+  biolink:expressed_in:          {domain: [biolink:Gene], range: [biolink:AnatomicalEntity]}
+  gramene:expressed_during:      {domain: [biolink:Gene], range: [biolink:LifeStage]}
+  biolink:participates_in:       {domain: [biolink:Gene], range: [biolink:Pathway, biolink:BiologicalProcess]}
+  biolink:actively_involved_in:  {domain: [biolink:Gene], range: [biolink:BiologicalProcess]}
+  biolink:orthologous_to:        {domain: [biolink:Gene], range: [biolink:Gene]}
+  biolink:interacts_with:        {domain: [biolink:Gene], range: [biolink:Gene]}
+  biolink:regulates:             {domain: [biolink:Gene], range: [biolink:Gene]}
+  biolink:has_member:            {domain: [biolink:InformationContentEntity, biolink:GeneFamily, biolink:PopulationOfIndividualOrganisms]}
+  biolink:member_of:             {range: [biolink:InformationContentEntity, biolink:GeneFamily, biolink:PopulationOfIndividualOrganisms]}
+  biolink:has_input:             {domain: [biolink:Activity]}
+  biolink:has_output:            {domain: [biolink:Activity]}
+  biolink:same_as:               {}
+
+# Curated node classes POST /curate/workspaces/:ws/nodes accepts. Association nodes are created by the API only
+# (an assertion with >= 2 evidence lines). mint: the id the API gives when the request has none ({hex} = 12 hex).
+node_classes:
+  GramenePublication: {category: biolink:Publication, id_prefixes: [PMID, doi]}
+  AnalysisRun:        {category: biolink:Activity, id_prefixes: [gramene.analysis], mint: 'gramene.analysis:curated.{hex}@v1'}
+  KgCollection:       {category: biolink:InformationContentEntity, id_prefixes: [gramene.collection], mint: 'gramene.collection:cur_{hex}'}
+  Association:        {category: biolink:Association, id_prefixes: [gramene.assoc], api_only: true}
+
+knowledge_levels: [knowledge_assertion, logical_entailment, prediction, statistical_association, observation, not_provided]
+source: infores:sorghumbase-curation

@@ -16,3 +16,4 @@ export function errorBox(err, extra) {
 
 export const badge = (text, cls = '') => (text ? h('span', { class: `badge ${cls}`.trim() }, text) : null);
 export const section = (title, ...kids) => h('section', { class: 'panel' }, h('h2', null, title), ...kids);
+export const stateBadge = (s) => badge(s, `st-${s}`);

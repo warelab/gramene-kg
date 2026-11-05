@@ -1,0 +1,5 @@
+{
+  "comment": "Content-Security-Policy for every /kg/ui/* response (finding ui-ops#5). apps/api/server.mjs's UI handler sends `header: value` as is. Scripts only from self (Firebase SDK vendored in vendor/firebase) plus apis.google.com, which firebase-auth loads for the sign-in popup; API calls are same-origin (../v1/); Firebase Auth talks to *.googleapis.com and frames gramene-auth.firebaseapp.com / accounts.google.com. style-src allows 'unsafe-inline' only because the Google sign-in helper styles its hidden iframe; the UI itself sets no inline styles.",
+  "header": "Content-Security-Policy",
+  "value": "default-src 'self'; script-src 'self' https://apis.google.com; connect-src 'self' https://*.googleapis.com https://apis.google.com; frame-src https://gramene-auth.firebaseapp.com https://accounts.google.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'"
+}

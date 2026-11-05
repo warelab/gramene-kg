@@ -1,13 +1,16 @@
-// gramene-kg browse UI: hash router + header. Pages: #/search, #/node/<curie>, #/release[?id=].
+// gramene-kg browse UI: hash router + header. Pages: #/search, #/node/<curie>, #/release[?id=], #/curate[/ws/<id>|/assertion/<id>].
 import { api } from './api.js';
-import { h, parseHash, buildHash, fmtNum } from './lib.js';
+import { h, parseHash, buildHash, fmtNum, fill } from './lib.js';
 import { errorBox, setTitle } from './ui.js';
 import { renderSearch } from './search.js';
 import { renderNode } from './node.js';
 import { renderRelease } from './release.js';
+import { renderCurate } from './curate.js';
+import { initAuth, onAuthChange, currentUser, signOut } from './auth.js';
 
 const main = document.getElementById('main');
 const relBox = document.getElementById('release-info');
+const authBox = document.getElementById('auth-box');
 let ctrl = null;
 
 async function loadHeader() {
@@ -15,7 +18,7 @@ async function loadHeader() {
     const { data } = await api('releases');
     const cur = data.find(r => r.is_current) ?? data[0];
     if (!cur) return;
-    relBox.replaceChildren(h('a', { href: buildHash('release', '', { id: cur.id }), title: `promoted ${cur.promoted_at ?? ''}` },
+    fill(relBox, h('a', { href: buildHash('release', '', { id: cur.id }), title: `promoted ${cur.promoted_at ?? ''}` },
       h('span', { class: 'rel' }, cur.id), ' · build ', h('code', null, cur.build)),
       cur.counts ? h('span', { class: 'muted small' }, ` · ${fmtNum(cur.counts.nodes)} nodes, ${fmtNum(cur.counts.edges)} edges`) : null);
   } catch (e) { relBox.textContent = 'release unavailable'; }
@@ -27,15 +30,18 @@ async function route() {
   const { signal } = ctrl;
   const r = parseHash(location.hash);
   for (const a of document.querySelectorAll('nav a[data-page]')) { if (a.dataset.page === r.page) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); }
-  main.replaceChildren(h('p', { class: 'loading' }, 'Loading…'));
+  fill(main, h('p', { class: 'loading' }, 'Loading…'));
   main.setAttribute('aria-busy', 'true');
   try {
+    await initAuth();                      // instant unless this browser signed in before; then node pages carry the token
+    if (signal.aborted) return;
     if (r.page === 'node' && r.arg) await renderNode(main, r, signal);
+    else if (r.page === 'curate') await renderCurate(main, r, signal);
     else if (r.page === 'release') await renderRelease(main, r, signal);
     else await renderSearch(main, r, signal);
   } catch (e) {
     if (e?.name === 'AbortError') return;
-    main.replaceChildren(errorBox(e));
+    fill(main, errorBox(e));
     setTitle('Error');
   } finally {
     if (!signal.aborted) main.removeAttribute('aria-busy');
@@ -54,6 +60,20 @@ document.getElementById('search-form').addEventListener('submit', (ev) => {
   const hash = buildHash('search', '', { q });
   if (location.hash === hash) route(); else location.hash = hash;
 });
+// header sign-in state: a plain link for anonymous visitors (no Firebase download until #/curate)
+function renderAuthBox() {
+  if (!authBox) return;
+  const u = currentUser();
+  fill(authBox, u ? [h('span', { class: 'who', title: u.uid }, u.email || u.name || u.uid), u.kind === 'test' ? ' (test)' : '', ' ',
+    h('button', { type: 'button', class: 'link', onclick: () => signOut() }, 'Sign out')] : h('a', { href: '#/curate' }, 'Sign in'));
+}
+let booted = false;
+onAuthChange(() => {
+  renderAuthBox();
+  const p = parseHash(location.hash).page;
+  if (booted && (p === 'curate' || p === 'node')) route();     // re-render with (or without) the caller's private workspaces
+});
+initAuth().then(() => { booted = true; renderAuthBox(); });
 window.addEventListener('hashchange', route);
 loadHeader();
 route();

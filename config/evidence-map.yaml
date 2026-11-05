@@ -70,4 +70,6 @@ families:
   tf_family:
     direct:     {primary_knowledge_source: infores:grassius, knowledge_level: knowledge_assertion, agent_type: manual_agent}
     projected:  {primary_knowledge_source: infores:grassius, knowledge_level: prediction, agent_type: computational_model, has_evidence: [ECO:0000080]}
+  # curated layer (M3, build/lib/curated.mjs): knowledge_level comes from the assertion's evidence lines, this is the default
+  curated_assertion:    {primary_knowledge_source: infores:sorghumbase-curation, knowledge_level: knowledge_assertion, agent_type: manual_agent}
   structural:           {primary_knowledge_source: infores:gramene-kg, knowledge_level: knowledge_assertion, agent_type: automated_agent}   # slots emitted as KGX edges

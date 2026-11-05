@@ -117,6 +117,46 @@ for (const [name, sql, fq, tol, fam] of cross) {
   gate(`cross-check ${name}: kg ${kg} vs ${cfg.genes_core} ${solr}`, rel <= tol, `${(rel * 100).toFixed(2)}% (tolerance ${(tol * 100).toFixed(1)}%)`);
 }
 
+// ---- curated layer (only when kg20 baked a kg_curation snapshot) -----------------------------------
+const SNAPF = path.join(env('BUILD_OUT'), 'extract', 'snapshots', 'kg_curation.json');
+if (fs.existsSync(SNAPF)) {
+  const { curatedEdgeHex, associationHex, isAssociation } = await import('./curated.mjs');
+  const snap = JSON.parse(fs.readFileSync(SNAPF, 'utf8'));
+  const hasAsn = (await one(`SELECT count(*) FROM (DESCRIBE SELECT * FROM edges) WHERE column_name = 'asn'`)) > 0;
+  const cur = hasAsn ? await q(`SELECT id, subject, predicate, object, qualifiers, primary_knowledge_source pks, asn.id AS asn_id, asn.rev AS asn_rev, family
+    FROM edges WHERE layer = 'curated'`) : [];
+  const noAsn = cur.filter(e => e.asn_id == null || e.asn_rev == null);
+  gate('every curated edge carries asn {id, rev}', noAsn.length === 0, `${noAsn.length} without${noAsn.length ? ', e.g. ' + noAsn[0].id : ''}`);
+  // the snapshot holds, per assertion id, only the highest revision and only when it is published
+  const pub = new Map(snap.assertions.map(a => [a.id, a]));
+  const superseded = new Set(snap.assertions.map(a => a.supersedes).filter(Boolean).map(s => String(s).split('@')[0]));
+  const stale = cur.filter(e => { const a = pub.get(e.asn_id); return !a || a.state !== 'published' || Number(a.rev) !== Number(e.asn_rev) || superseded.has(e.asn_id); });
+  gate('every curated edge\'s assertion is published and its latest revision (kg_curation snapshot)', stale.length === 0,
+    stale.slice(0, 5).map(e => `${e.id} ${e.asn_id}@${e.asn_rev}`).join('; '));
+  const badId = cur.filter(e => { const a = pub.get(e.asn_id); if (!a) return true;
+    return e.id !== (isAssociation(a) ? associationHex(a) : curatedEdgeHex(a)) || e.pks !== 'infores:sorghumbase-curation' || e.family !== 'curated'; });
+  gate('curated edge ids follow docs/curation.md (sha256-24 incl. assertion id)', badId.length === 0, badId.slice(0, 5).map(e => e.id).join('; '));
+  const etlCurated = await one(`SELECT count(*) FROM edges WHERE (layer = 'curated') <> (family = 'curated')`);
+  gate('layer curated <=> family curated', etlCurated === 0, `${etlCurated} edges`);
+  // retractions after kg20 are masked by the API; here they are only reported
+  if (cur.length && !process.env.KG_CURATION_SNAPSHOT) {
+    try {
+      const { MongoClient } = await import('mongodb');
+      const cl = await MongoClient.connect(env('MONGO_URI'), { serverSelectionTimeoutMS: 5000 });
+      const top = await cl.db(snap.db).collection('assertions').aggregate([{ $match: { id: { $in: [...new Set(cur.map(e => e.asn_id))] } } },
+        { $sort: { id: 1, rev: -1 } }, { $group: { _id: '$id', rev: { $first: '$rev' }, state: { $first: '$state' } } }]).toArray();
+      await cl.close();
+      const live = new Map(top.map(t => [t._id, t]));
+      const drift = cur.filter(e => { const t = live.get(e.asn_id); return !t || t.state !== 'published' || Number(t.rev) !== Number(e.asn_rev); });
+      if (drift.length) warn('curated assertions changed in kg_curation since kg20 (the API masks them; the next build bakes them)',
+        drift.slice(0, 10).map(e => `${e.asn_id}@${e.asn_rev} -> ${live.get(e.asn_id) ? `${live.get(e.asn_id).state}@${live.get(e.asn_id).rev}` : 'gone'}`).join('; '));
+    } catch (e) { warn('curated live check', `kg_curation not readable: ${e.message}`); }
+  }
+  const rep = path.join(env('BUILD_OUT'), 'attach_report.json');
+  const nUnres = fs.existsSync(rep) ? JSON.parse(fs.readFileSync(rep, 'utf8')).unresolved.length : 0;
+  if (nUnres) warn('curated CURIEs not in this build (attach_report.json, kg_curation.attach_reports)', `${nUnres} unresolved`);
+}
+
 // ---- JSON Schema sample (edges carry the provenance contract) ------------------------------------
 const sample = await q(`SELECT id, subject, predicate, object, primary_knowledge_source, knowledge_level, agent_type, layer, has_evidence, publications
   FROM edges USING SAMPLE 2000 ROWS`);
@@ -139,8 +179,11 @@ counts.nodes_total = Object.values(counts.nodes).reduce((a, b) => a + b, 0);
 counts.edges_total = Object.values(counts.edges).reduce((a, b) => a + b, 0);
 fs.writeFileSync(buildOut('counts.json'), JSON.stringify(counts, null, 1));
 const NO_GATE = new Set(['KgCollection', 'collection_member', 'KgDistribution', 'KgDataset', 'IngestRun', 'SoftwareAgent', 'AnalysisRun']);
+// curated counts follow curators, not the release: never recorded, never gated
+const CURATED = new Set(['curated', 'Association']);
+const uncurated = (o) => Object.fromEntries(Object.entries(o).filter(([k]) => !CURATED.has(k)));
 if (MODE === 'record') {
-  const exp = { recorded_at: new Date().toISOString(), build_id: env('BUILD_ID'), tolerance: TOL, nodes: counts.nodes, edges: counts.edges,
+  const exp = { recorded_at: new Date().toISOString(), build_id: env('BUILD_ID'), tolerance: TOL, nodes: uncurated(counts.nodes), edges: uncurated(counts.edges),
     not_gated: [...NO_GATE] };
   if (fs.existsSync(EXP_FILE)) { const old = JSON.parse(fs.readFileSync(EXP_FILE, 'utf8')); exp.nodes = { ...old.nodes, ...exp.nodes }; exp.edges = { ...old.edges, ...exp.edges }; }
   fs.writeFileSync(EXP_FILE, JSON.stringify(exp, null, 1) + '\n');
@@ -155,7 +198,7 @@ if (MODE === 'record') {
     const rel = want ? Math.abs(have - want) / want : (have ? 1 : 0);
     if (rel > (exp.tolerance ?? TOL)) { countFails++; gate(`count ${kind}.${k} ${have} within ${(exp.tolerance ?? TOL) * 100}% of ${want}`, false); }
   }
-  const newKeys = ['nodes', 'edges'].flatMap(kind => Object.keys(counts[kind]).filter(k => !(k in exp[kind])).map(k => `${kind}.${k}`));
+  const newKeys = ['nodes', 'edges'].flatMap(kind => Object.keys(counts[kind]).filter(k => !(k in exp[kind]) && !CURATED.has(k)).map(k => `${kind}.${k}`));
   if (newKeys.length) gate('no unexpected node classes / edge families (re-record expectations to add)', false, newKeys.join(', '));
   else if (!countFails) gate('counts within expectations', true, `tolerance ${(exp.tolerance ?? TOL) * 100}%`);
 }

@@ -1,8 +1,9 @@
 # gramene-kg API
 
-`apps/api/server.mjs` (Fastify 5, pm2 `gramene-kg-api`, `:12000`). Read-only. The only Mongo dbs it touches
-are `kg_meta` and the promoted `kg_<release>_b<build>`, plus the release's Solr core and the build's Parquet
-and `counts.json` under `KG_BUILDS_DIR` (default `/scratch/olson/gramene-kg/builds`).
+`apps/api/server.mjs` (Fastify 5, pm2 `gramene-kg-api`, `:12000`). It reads `kg_meta`, the promoted
+`kg_<release>_b<build>` and `kg_curation`, plus the release's Solr core and the build's Parquet and `counts.json`
+under `KG_BUILDS_DIR` (default `/scratch/olson/gramene-kg/builds`). It writes only to `kg_curation`, through the
+curation write client (see "Curation" below).
 
 | file | role |
 |---|---|
@@ -11,12 +12,13 @@ and `counts.json` under `KG_BUILDS_DIR` (default `/scratch/olson/gramene-kg/buil
 | `apps/api/graphql.mjs` | GraphQL schema, resolvers, loaders, depth/complexity rule; resolvers call `core.mjs` |
 | `apps/api/jsonld.mjs` | JSON-LD rendering of a node |
 | `apps/api/derived.mjs` | DuckDB lookups over the derived Parquet buckets |
+| `apps/api/curation.mjs`, `auth.mjs`, `curation-db.mjs`, `curation-ids.mjs` | curation API, tokens, write client, ids (below) |
 
 REST and GraphQL share the same functions, so their results cannot diverge. GraphQL only renames fields
 to camelCase and adds connections.
 
 Environment: `KG_PORT`, `KG_HOST`, `KG_SITE` (picks the current release), `MONGO_URL`, `SOLR_URL`,
-`KG_BUILDS_DIR`, `KG_PUBLIC_URL` (the public base of `/kg`, used for the JSON-LD `@context` URL; default
+`KG_BUILDS_DIR`, `KG_CURATION_DB` (default `kg_curation`), `KG_AUTH_TEST_SECRET` (dev only), `KG_PUBLIC_URL` (the public base of `/kg`, used for the JSON-LD `@context` URL; default
 `http://127.0.0.1:12000/kg`), `LOG_LEVEL`. The context URL is never built from the request's `Host` header, which
 the client controls and which, behind the planned gorgonzola proxy, would name the internal host. `KG_PUBLIC_URL`
 is deliberately not set in `ecosystem.config.cjs` yet: set it to `https://data.sorghumbase.org/kg` once the
@@ -260,10 +262,175 @@ curl -s localhost:12000/kg/graphql -H 'content-type: application/json' \
   -d '{"query":"{ node(id:\"gramene.qtl:QPGYR5.1\"){ __typename name } }"}'
 ```
 
+## Curation `/kg/v1/curate/*` (M3)
+
+The contract is docs/curation.md. Code: `apps/api/curation.mjs` (routes), `apps/api/auth.mjs` (tokens),
+`apps/api/curation-db.mjs` (the write client), `apps/api/curation-ids.mjs` (ids and hashes, shared with the build),
+`packages/policy/index.mjs` (the g2p policy, vendored), `config/curation.yaml` (predicate allow-list, node classes).
+
+### Auth
+
+`Authorization: Bearer <Firebase ID token>` of project `gramene-auth` (verified by firebase-admin with
+`projectId` only: Google's public keys, no service-account file). The token is optional on every route, read
+routes included: it decides which curated data is shown. A token that fails verification is treated as no token
+on read routes and gives 401 (`hint: invalid or expired token`) on routes that need a user.
+
+Dev servers only: with `KG_AUTH_TEST_SECRET` (≥ 16 characters) set, HS256 JWTs `{uid, email, exp, iat?}` signed
+with it are accepted too: `exp` is required, in the future and at most 1 h ahead, `iat` (optional) not in the
+future; anything else is a 401 (`invalid or expired token`). The server refuses to start with
+`KG_AUTH_TEST_SECRET` and `NODE_ENV=production` together, and pm2 `gramene-kg-api` runs with
+`NODE_ENV=production`. With test tokens on, `KG_HOST` defaults to 127.0.0.1 (a non-loopback `KG_HOST` logs a
+warning). `signTestToken(claims, secret, ttl = 900)` in `auth.mjs` signs one with `iat` and `exp` set.
+
+```
+node -e 'const c=require("crypto"),e=o=>Buffer.from(JSON.stringify(o)).toString("base64url"),n=Math.floor(Date.now()/1000),
+  h=e({alg:"HS256",typ:"JWT"})+"."+e({uid:"dev-1",email:"dev@example.org",iat:n,exp:n+3600});
+  console.log(h+"."+c.createHmac("sha256",process.env.KG_AUTH_TEST_SECRET).update(h).digest("base64url"))'
+```
+
+Roles per workspace (owner > curator > contributor > reader) come from the vendored g2p policy; a principal is
+`{uid, orgs}` with `orgs` from `kg_curation.users` (empty until an org is added there by hand). Public workspaces
+are readable by anyone. Anything the caller cannot read is a **404** (`no workspace 'ws_…'`, `no assertion
+'asn_…'`), whether or not it exists; a readable thing without the role is a 403; a write without a token is a 401.
+
+**Site curators** (`kg_curation.site_roles`, edited by the operator only; docs/curation.md has the mongosh
+command): in a public workspace `publish`, `reject` and `retract` need a site curator, who needs no role in the
+workspace for them (workspace curators and owners who are not site curators get 403 `… requires a site
+curator`). Creating a workspace public, or PATCHing a workspace to `visibility: public`, needs an owner who is a
+site curator. Private workspaces keep the workspace roles.
+
+**Uids.** Members of a workspace (owner, user or org ACL entry) see raw uids in `owner`, `created_by`,
+`updated_by`, `revisions[].updated_by` and events' `by`; everyone else sees the user's `display_name` when
+`display_opt_in`, else `user-<12 hex>` (sha256 of `<workspace id>|<uid>`: stable per workspace).
+
+### Routes
+
+Every response is the usual envelope `{release, build, data, meta}` (`release`/`build` = the release used for
+resolution, the current one unless `release=`). Lists take `limit` ≤ 500 (default 100) and `offset`, and give
+`meta.total`. Bodies are JSON; an unknown field is a 400 that lists the accepted ones.
+
+| method, route | role | body / query → data |
+|---|---|---|
+| `GET /curate/me` | signed in | `{uid, email, display_name, display_opt_in, orgs, site_role: 'site_curator'\|null, workspaces[{id, name, visibility, role}]}`; records the user in `users`. On a dev server (`KG_AUTH_TEST_SECRET`) `meta.auth_test_mode: true`, also in the 401 body, so the UI offers test sign-in |
+| `GET /curate/predicates` | any | the `config/curation.yaml` allow-list `[{id, domain, range}]` (categories comma-joined without `biolink:`, null = any); `meta.node_classes`, `meta.knowledge_levels` |
+| `POST /curate/workspaces` | signed in | `{name, description?, visibility?: private\|public}` → 201 workspace; the caller is its owner; `public` needs a site curator (403) |
+| `GET /curate/workspaces` | any | readable workspaces: `[{id, name, description, visibility, owner, role, member, created_at, updated_at}]` (`acls` for the owner only; `owner` per "Uids") |
+| `GET /curate/workspaces/:ws` | reader | the workspace plus `assertions` (latest revisions by state) and `nodes` (count) |
+| `PATCH /curate/workspaces/:ws` | owner | `{name?, description?, visibility?}`; visibility applies to the read side at once; to `public` also needs a site curator (403) |
+| `PUT /curate/workspaces/:ws/acl` | owner | `{acls: [{principal: {type: user\|org, id}, role: reader\|contributor\|curator\|owner}]}` replaces the list |
+| `POST /curate/workspaces/:ws/nodes` | contributor | `{class, id?, name?, description?, xrefs?, attrs?, rev?}` → 201 (200 when this workspace already has the id: new rev); 409 when a concurrent write won or `rev` (the revision the change is based on, 0 = new) is not the current one |
+| `GET /curate/workspaces/:ws/nodes?class=` | reader | curated nodes `[{id, workspace, class, category, name, description, xrefs, attrs, assertion?, rev, content_sha256, …}]` |
+| `POST /curate/workspaces/:ws/assertions` | contributor | `{subject, predicate, object, qualifiers?, negated?, evidence?, note?, disputes?, supersedes?}` → 201 draft |
+| `GET /curate/workspaces/:ws/assertions?state=` | reader | one row per assertion (its highest revision), newest change first; `state` is a comma list |
+| `GET /curate/assertions/:id[?rev=n]` | reader | the latest (or that) revision plus `revisions[{rev, state, latest, updated_at, updated_by, content_sha256}]` |
+| `PATCH /curate/assertions/:id` | contributor | semantic fields, as for POST (minus `supersedes`); drafts and rejected only (rejected → draft); 409 otherwise |
+| `POST /curate/assertions/:id/submit` | contributor | draft → submitted; 422 unless an evidence line cites a publication or an ECO code |
+| `POST /curate/assertions/:id/publish` | curator (public ws: site curator) | submitted → published; subject and object must still resolve to the same ids (409 otherwise) |
+| `POST /curate/assertions/:id/reject` | curator (public ws: site curator) | `{reason}` (required): submitted → rejected |
+| `POST /curate/assertions/:id/retract` | curator (public ws: site curator) | `{reason}` (required): published → retracted; hidden on the read side at once |
+| `GET /curate/assertions/:id/events` | reader | `[{assertion, rev, from, to, by, at, reason}]`, oldest first (creation is `null → draft`) |
+| `GET /curate/reports?release=` | any | `attach_reports` of the release, newest first, `unresolved` cut to assertions of workspaces the caller can read |
+
+A transition from the wrong state is a 409 (`cannot publish assertion asn_…: it is draft, not submitted`). Every
+state change and edit appends a revision `<id>@<rev+1>` and a `review_events` row (edits: an `audit` row);
+`content_sha256` is the sha256 of the canonical JSON of subject, predicate, object, qualifiers, negated, evidence,
+note and disputes.
+
+**Assertion fields.** `predicate` is a key of `config/curation.yaml` `predicates` or its unique local name
+(`mentions` → `biolink:mentions`); others are a 400 listing the allow-list. `subject`/`object` are resolved with
+`/resolve`'s code (exact id, bare id under the known prefixes, alias) against the release; a bare or alias match
+is stored as the resolved id with a `meta.warnings` entry. Otherwise the id must be a curated node of this
+workspace or of a public one. Ambiguous → **409** with `candidates` (as `/resolve`); unresolvable → **422** with
+`candidates` (top 5 search hits; when search finds none, up to 5 build ids sharing the longest leading part of the CURIE, e.g. `gramene.genetree:SB11GT_*` for `SB10GT_1`). Domain/range: the subject (object) must carry one of the predicate's
+`domain` (`range`) Biolink categories (build node `category`, or the curated node class's category), else 400.
+`evidence` is `[{publications: [PMID:…|doi:…], has_evidence: [ECO:nnnnnnn], knowledge_level, note}]`
+(`knowledge_level` from `knowledge_levels` in the yaml, default `knowledge_assertion`). `qualifiers` is an object of
+scalars or scalar arrays. `disputes` is an edge id of the build or of a published assertion of this workspace or
+of a public one (the same 422 otherwise, also for a private workspace's edge).
+`supersedes` (create only) names a published assertion of the same workspace (`asn_…` or `asn_…@rev`; stored as
+`<id>@<its latest rev>`); once the correction is published the original is hidden.
+
+**Ids** (`curation-ids.mjs`, also used by the build's `build/lib/curated.mjs` formula): `edge_id` =
+`gramene.assoc:` + sha256-24 of `subject|predicate|object|infores:sorghumbase-curation|<canonical qualifiers
+JSON>|<assertion id>`; with two or more evidence lines the API creates (and keeps in step on draft edits) the curated
+node `association_id` = `gramene.assoc:` + sha256-24 of `subject|predicate|object|<assertion id>`, class
+`Association`, `attrs {subject, predicate, object, qualifiers}`, and the edge id is the association id.
+
+**Curated nodes.** Classes `GramenePublication` (id `PMID:`/`doi:`, required), `AnalysisRun`
+(`gramene.analysis:…`, minted `gramene.analysis:curated.<12 hex>@v1` when absent), `KgCollection`
+(`gramene.collection:…`, minted `gramene.collection:cur_<12 hex>`); ids are checked against `config/prefixes.yaml`.
+A publication found in `kg_meta.publication_cache` (read only) gets `name` = title and `attrs {enriched, journal,
+year, authors, n_authors?, enrichment_source}` plus the PMID/DOI xref; otherwise `meta.warnings` says it is not
+enriched. Records are per workspace (`_id` `<ws>|<curie>`, fields `curie`, `workspace`): the same CURIE may be
+curated in several workspaces, with no cross-workspace check; GET lists this workspace's records by `curie` (the
+output `id`). `Association` nodes are API-made only, derived from the assertion's highest revision after each
+revision insert (a 409 loser changes nothing).
+
+### Read side (existing routes)
+
+`/node/{curie}`, `/node/{curie}/edges`, `/edge/{id}`, `/path`, `/search` and GraphQL take the caller from the same
+token. GraphQL passes it to every core call (`node`, `nodes`, `neighbors`, `edge`, `path`, `search`, and the
+`other`/`subjectNode`/`objectNode` loaders), so it shows exactly what REST shows the same caller.
+
+- A curated edge is shown when its assertion's latest revision is `published`, in a workspace the caller can
+  read, and not superseded. Baked curated edges (in the build, `asn {id, rev}`) are shown only while `asn.rev` is
+  still that revision; assertions published after the build are added from `kg_curation`. Both come out as
+  ordinary edges with `provenance.layer: 'curated'`, `primary_knowledge_source infores:sorghumbase-curation`,
+  `agent_type manual_agent`, and an extra `curation: {assertion, rev, state, workspace}` (GraphQL
+  `Edge.curation: JSON`, null for ETL edges).
+- `/node/{curie}/edges` lists unbaked curated edges in a fifth phase `cur` (after `slot_in`, by edge id); filters
+  (`direction`, `predicate`, `category`, `source`, `include_negated`) apply as to stored edges. `meta.degree` and
+  `/node` `degree` add unbaked and subtract masked curated edges. `/node` adds `meta.warnings: ["curated counts as
+  of build <build>"]` when that adjustment is not zero (its `card` and Solr fields still count as of the build), and
+  `/search` adds it when a curated change visible to the caller was made since the build was loaded.
+- Curated nodes not in the build resolve by exact id through `/node`, `/node/{curie}/edges`, GraphQL `node`/`nodes`
+  and the edge end-point loaders; a private workspace's node is a 404 to anyone who cannot read it. The caller's
+  visible records of a CURIE are merged: each under `attributes.curated.<ws>` (`{source, rev, content_sha256, cls,
+  name, description, xrefs, attrs}`), class / top-level attrs from the oldest record, `curation: {workspace, rev,
+  workspaces[]}`. Build nodes get `attributes.curated` the same way (baked entries the caller cannot see dropped;
+  absent when none). An `Association` node (curated or baked), and a baked `attrs.curated_only` node, is shown
+  only while one of its records is visible: otherwise 404 / null, and left out of `/search` rows and `/resolve`.
+- A curated self-loop is listed twice (out and in) by `/node/{curie}/edges`, before and after the build.
+- Anonymous visibility uses a ≤ 10 s cache of the public workspaces, dropped by the process's own curation writes.
+- `/path` walks baked curated edges only (masked as above); unbaked ones join after the next build.
+- With no assertion touching the nodes asked for, every response is byte-identical to the ETL-only API (checked
+  over 42 REST and GraphQL URLs with an empty `kg_curation`).
+
+### Mongo
+
+The API holds two clients: the read client (`kg_meta`, the build dbs, and reads of `kg_curation`), and the
+curation write client from `curation-db.mjs`, a separate `MongoClient` wrapped so the only handle the API gets
+exposes collections of one db and throws on any other db name. The db name is `KG_CURATION_DB` (default
+`kg_curation`); only `kg_curation`, `kg_curation_test*` and `kg_curation_fixture*` are accepted, checked before
+connecting. At startup it runs `dbStats` to confirm the bound name and creates the indexes (idempotent):
+assertions `{id:1, rev:-1}`, `{workspace:1, latest:1, state:1}`, `{subject:1}`, `{object:1}`, `{edge_id:1}`,
+`{latest:1, state:1, updated_at:1}` (changes since a build), `{supersedes:1}` (partial on `latest: true`);
+review_events `{assertion:1, at:1}`; curated_nodes `{curie:1, workspace:1}` (unique), `{workspace:1, curie:1}`,
+`{assertion:1}`. Every read-side overlay query uses one of them (the tests check `explain()` for IXSCAN).
+`kg_meta.publication_cache` is only read. `site_roles` is keyed by uid and needs none.
+
+### Tests
+
+```
+KG_AUTH_TEST_SECRET=<secret> KG_CURATION_DB=kg_curation_test_api NODE_ENV=development KG_HOST=127.0.0.1 KG_PORT=12001 node apps/api/server.mjs
+KG_API_URL=http://127.0.0.1:12001 KG_AUTH_TEST_SECRET=<secret> KG_CURATION_DB=kg_curation_test_api node --test test/curation.test.mjs
+```
+
+`test/curation.test.mjs` covers every route, every transition, the role boundaries (owner, curator,
+contributor, reader, anonymous, other user, site curator), test-token claims (exp, iat), site-curator rules
+(public workspaces, visibility), uid pseudonyms and display names, private and public visibility on the curate
+routes and on `/node`, `/node/{curie}/edges`, `/edge/{id}` and GraphQL, per-workspace curated node records and
+their merge, optimistic node writes under concurrency, Association nodes under concurrent edits, listings with
+two `latest:true` revisions, disputes rules, a live self-loop, the overlay indexes (`explain()`), revisions and
+events, retract and supersede masking, unresolvable and ambiguous CURIEs, attach-report filtering, the write
+client's db binding, and (in a child process on a throwaway `kg_curation_fixture_*` db) the overlay on baked
+curated edges and hidden baked curated-only nodes. It inserts its site curator into `site_roles` directly. Its
+workspaces are named `TEST …`; it deletes everything it wrote, and drops the fixture db.
+
 ## Verifying a change
 
 1. Capture about 60 REST URLs from the running API before the change, and the same URLs from a dev server
-   (`KG_PORT=12001 node apps/api/server.mjs` with the `ecosystem.config.cjs` env). Compare status,
+   (`KG_HOST=127.0.0.1 KG_PORT=12001 node apps/api/server.mjs` with the rest of the `ecosystem.config.cjs` env). Compare status,
    content-type, `X-KG-*` headers and body byte for byte.
 2. Run `KG_API_URL=http://127.0.0.1:12001 node --test eval/run.test.mjs`.
 
